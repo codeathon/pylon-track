@@ -7,8 +7,8 @@ Real-time dual-animal tracking from a Basler USB3 camera using the [Basler pylon
 ## What it does
 
 1. Opens the first available Basler camera (`CBaslerUniversalInstantCamera`).
-2. Configures mono8 capture, AOI, exposure, gain, and ~200 fps frame rate (`camera_config.cpp`).
-3. On each frame (`ferret_tracker.cpp`):
+2. Configures mono8 capture, AOI, exposure, gain, and ~200 fps frame rate (`src/camera_config.cpp`).
+3. On each frame (`src/ferret_tracker.cpp`):
    - MOG2 background subtraction (30 s warmup — keep arena empty)
    - Morphological cleanup + contour detection
    - Assigns largest blob → ferret, second largest → prey
@@ -26,15 +26,21 @@ Ferret: (450, 320)mm  850mm/s  45deg  |  Prey: (520, 410)mm  120mm/s  90deg  |  
 
 ```text
 pylon-track/
-├── main.cpp              Entry point, signal handling, stdout loop
-├── camera_config.cpp     Basler GenICam settings (AOI, exposure, FPS)
-├── ferret_tracker.cpp    Pylon image handler: BG subtract + track logic
-├── ferret_tracker.h
-├── tracker.cpp           Shared Kalman filter helper
-├── tracker.h             TrackState struct
-├── display.cpp           Live overlay window (helper thread)
-├── display.h
-└── CMakeLists.txt        Build + optional run_rt / install_udev targets
+├── CMakeLists.txt
+├── include/                  Public headers
+│   ├── camera_config.h
+│   ├── display.h
+│   ├── ferret_tracker.h
+│   └── tracker.h
+├── src/                      Implementation
+│   ├── main.cpp              Entry point, signal handling, stdout loop
+│   ├── camera_config.cpp     Basler GenICam settings (AOI, exposure, FPS)
+│   ├── ferret_tracker.cpp    Pylon image handler: BG subtract + track logic
+│   ├── tracker.cpp           Shared Kalman filter helper
+│   └── display.cpp           Live overlay window (helper thread)
+└── build/                    Out-of-source build (created by you)
+    └── bin/
+        └── ferret_tracker    Executable output
 ```
 
 Source files still use the `ferret_tracker` name internally; the repo name reflects the **pylon** camera stack.
@@ -112,7 +118,7 @@ cmake -DOpenCV_DIR=/usr/lib/x86_64-linux-gnu/cmake/opencv4 -DPYLON_ROOT=/opt/pyl
 ## Run
 
 ```bash
-./build/ferret_tracker
+./build/bin/ferret_tracker
 ```
 
 Headless mode (default): telemetry only on stdout.
@@ -120,7 +126,7 @@ Headless mode (default): telemetry only on stdout.
 ### Live display (optional)
 
 ```bash
-./build/ferret_tracker --display
+./build/bin/ferret_tracker --display
 ```
 
 - Opens an OpenCV window on a **dedicated helper thread** (~30 Hz refresh)
@@ -130,7 +136,7 @@ Headless mode (default): telemetry only on stdout.
 
 Requires a graphical session (`DISPLAY` set). For SSH, use X forwarding (`ssh -X`) or run on the machine with a monitor attached.
 
-On first launch, keep the **arena empty for 30 seconds** while the background model warms up (`WARMUP_FRAMES` in `ferret_tracker.h`).
+On first launch, keep the **arena empty for 30 seconds** while the background model warms up (`WARMUP_FRAMES` in `include/ferret_tracker.h`).
 
 ### USB access (without root)
 
@@ -149,12 +155,12 @@ make run_rt
 Runs the binary under `chrt -f 50` (SCHED_FIFO). May require:
 
 ```bash
-sudo setcap cap_sys_nice+ep build/ferret_tracker
+sudo setcap cap_sys_nice+ep build/bin/ferret_tracker
 ```
 
 ## Camera and optics assumptions
 
-Tuned in `camera_config.cpp` and `ferret_tracker.h`:
+Tuned in `src/camera_config.cpp` and `include/ferret_tracker.h`:
 
 | Constant | Value | Meaning |
 |----------|-------|---------|
@@ -170,11 +176,11 @@ Change these if your mount height, lens, or arena size differs.
 
 | Parameter | Location | Purpose |
 |-----------|----------|---------|
-| Contour area 200–60000 px² | `ferret_tracker.cpp` | Noise floor / max ferret blob |
-| Merge threshold 15000 px² | `ferret_tracker.cpp` | Single-blob = ferret+prey overlap |
-| MOG2 history 500, var threshold 16 | `ferret_tracker.cpp` | Background model |
-| BG learning rate 0.01 → 0.002 | `ferret_tracker.cpp` | Fast warmup, slow during experiment |
-| Morph kernel 7×7 ellipse | `ferret_tracker.cpp` | Remove sub-paw noise |
+| Contour area 200–60000 px² | `src/ferret_tracker.cpp` | Noise floor / max ferret blob |
+| Merge threshold 15000 px² | `src/ferret_tracker.cpp` | Single-blob = ferret+prey overlap |
+| MOG2 history 500, var threshold 16 | `src/ferret_tracker.cpp` | Background model |
+| BG learning rate 0.01 → 0.002 | `src/ferret_tracker.cpp` | Fast warmup, slow during experiment |
+| Morph kernel 7×7 ellipse | `src/ferret_tracker.cpp` | Remove sub-paw noise |
 
 ## Architecture (data flow)
 
@@ -207,7 +213,7 @@ main loop reads TrackState → printf distance + kinematics
 |-------|-----------------|
 | `Could not find a package configuration file provided by "OpenCV"` | Install `libopencv-dev`, then use `-DOpenCV_DIR=/usr/lib/x86_64-linux-gnu/cmake/opencv4` if needed |
 | `--display` / `cannot open display` | Run on a desktop session or `ssh -X`; ensure `echo $DISPLAY` is set |
-| `chrt: Operation not permitted` (`make run_rt`) | Use `./ferret_tracker` instead, or `sudo setcap cap_sys_nice+ep build/ferret_tracker` |
+| `chrt: Operation not permitted` (`make run_rt`) | Use `./build/bin/ferret_tracker` instead, or `sudo setcap cap_sys_nice+ep build/bin/ferret_tracker` |
 | `pylon SDK not found` | Set `-DPYLON_ROOT=` to your install prefix |
 | No camera found | USB cable, `install_udev`, camera powered |
 | No valid tracks after warmup | Lighting, gain (target ~80–100 DN background), arena contrast |
