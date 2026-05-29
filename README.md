@@ -31,13 +31,15 @@ pylon-track/
 │   ├── camera_config.h
 │   ├── display.h
 │   ├── ferret_tracker.h
+│   ├── logger.h                Global thread-safe logger
 │   └── tracker.h
 ├── src/                      Implementation
 │   ├── main.cpp              Entry point, signal handling, stdout loop
 │   ├── camera_config.cpp     Basler GenICam settings (AOI, exposure, FPS)
 │   ├── ferret_tracker.cpp    Pylon image handler: BG subtract + track logic
 │   ├── tracker.cpp           Shared Kalman filter helper
-│   └── display.cpp           Live overlay window (helper thread)
+│   ├── display.cpp           Live overlay window (helper thread)
+│   └── logger.cpp
 └── build/                    Out-of-source build (created by you)
     └── bin/
         └── ferret_tracker    Executable output
@@ -121,7 +123,31 @@ cmake -DOpenCV_DIR=/usr/lib/x86_64-linux-gnu/cmake/opencv4 -DPYLON_ROOT=/opt/pyl
 ./build/bin/ferret_tracker
 ```
 
-Headless mode (default): telemetry only on stdout.
+Headless mode (default): status messages use the global logger; tracking telemetry prints as **raw** lines (no timestamp prefix) for easy piping.
+
+### Logging
+
+| Flag | Effect |
+|------|--------|
+| (default) | `INFO` and above to stdout/stderr |
+| `--verbose` | Include `DEBUG` (e.g. frame timing ~1 Hz from tracker) |
+| `--log-file PATH` | Append all log lines to a file (creates parent dirs) |
+
+Example log line:
+
+```text
+[2026-05-29 14:30:01.234] [INFO] [main] Camera: a2A1920-160umPRO
+```
+
+Telemetry lines remain unprefixed:
+
+```text
+Ferret: (450, 320)mm  850mm/s  45deg  |  Prey: (520, 410)mm  ...
+```
+
+```bash
+./build/bin/ferret_tracker --verbose --log-file /tmp/pylon-track.log
+```
 
 ### Live display (optional)
 

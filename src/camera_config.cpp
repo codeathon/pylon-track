@@ -1,4 +1,5 @@
 #include "camera_config.h"
+#include "logger.h"
 
 void configure_camera(CBaslerUniversalInstantCamera& cam) {
     cam.Open();
@@ -31,4 +32,6 @@ void configure_camera(CBaslerUniversalInstantCamera& cam) {
     // Saturate USB3 bandwidth — minimizes transfer latency
     cam.DeviceLinkThroughputLimitMode.SetValue(
         DeviceLinkThroughputLimitMode_Off);
+
+	log_info("camera", "Configured Mono8 1920x960 @ 200 fps (AOI center crop)");
 }

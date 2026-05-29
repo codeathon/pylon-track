@@ -17,6 +17,7 @@ set(SOURCES
 	src/tracker.cpp
 	src/ferret_tracker.cpp
 	src/display.cpp
+	src/logger.cpp
 )
 
 # ── Compiler flags ────────────────────────────────────────────────────────────

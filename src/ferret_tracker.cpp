@@ -1,7 +1,9 @@
 #include "ferret_tracker.h"
+#include "logger.h"
 #include <cmath>
 #include <chrono>
 #include <algorithm>
+#include <sstream>
 
 FerretTracker::FerretTracker(bool enable_display)
 	: enable_display_(enable_display)
@@ -109,12 +111,14 @@ void FerretTracker::OnImageGrabbed(Pylon::CInstantCamera&,
 
 	++frame_count_;
 
-#ifndef NDEBUG
-	auto dt_us = std::chrono::duration_cast<std::chrono::microseconds>(
-		std::chrono::steady_clock::now() - t0).count();
-	// Expected: 2000–6000µs. If consistently >10000µs, reduce AOI or simplify pipeline.
-	(void)dt_us;
-#endif
+	// Log frame processing time ~1 Hz at 200 fps (Debug only).
+	if (frame_count_ % 200 == 0) {
+		const auto dt_us = std::chrono::duration_cast<std::chrono::microseconds>(
+			std::chrono::steady_clock::now() - t0).count();
+		std::ostringstream oss;
+		oss << "OnImageGrabbed " << dt_us << " us";
+		log_debug("tracker", oss.str());
+	}
 }
 
 void FerretTracker::update_track(cv::KalmanFilter& kf,

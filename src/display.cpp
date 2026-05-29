@@ -1,5 +1,6 @@
 #include "display.h"
 #include "ferret_tracker.h"
+#include "logger.h"
 
 #include <chrono>
 #include <cmath>
@@ -80,13 +81,17 @@ void DisplayThread::stop() {
 		thread_.join();
 	}
 	cv::destroyAllWindows();
+	log_info("display", "Display thread stopped");
 	tracker_ = nullptr;
 	app_running_ = nullptr;
 }
 
 void DisplayThread::run() {
+	log_info("display", "Display thread started");
 	cv::namedWindow("pylon-track", cv::WINDOW_NORMAL);
 	auto last_show = std::chrono::steady_clock::now();
+	int empty_snapshot_polls = 0;
+	bool warned_no_snapshot = false;
 
 	while (display_running_.load() && app_running_ && app_running_->load()) {
 		const auto now = std::chrono::steady_clock::now();
@@ -97,9 +102,15 @@ void DisplayThread::run() {
 
 		DisplaySnapshot snap;
 		if (!tracker_ || !tracker_->get_display_snapshot(snap)) {
+			++empty_snapshot_polls;
+			if (!warned_no_snapshot && empty_snapshot_polls > 100) {
+				log_warn("display", "No display snapshot yet — waiting for camera frames");
+				warned_no_snapshot = true;
+			}
 			std::this_thread::sleep_for(std::chrono::milliseconds(5));
 			continue;
 		}
+		empty_snapshot_polls = 0;
 
 		cv::Mat vis = render_overlay(snap);
 		cv::imshow("pylon-track", vis);

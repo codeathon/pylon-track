@@ -6,10 +6,12 @@
 #include <csignal>
 #include <atomic>
 #include <cstring>
+#include <string>
 
 #include "camera_config.h"
 #include "ferret_tracker.h"
 #include "display.h"
+#include "logger.h"
 
 using namespace Pylon;
 
@@ -17,23 +19,54 @@ static std::atomic<bool> g_running{true};
 
 void signal_handler(int) { g_running.store(false); }
 
-static bool parse_display_flag(int argc, char** argv) {
+struct AppOptions {
+	bool enable_display = false;
+	bool verbose = false;
+	std::string log_file;
+};
+
+static bool parse_args(int argc, char** argv, AppOptions& opts) {
 	for (int i = 1; i < argc; ++i) {
 		if (std::strcmp(argv[i], "--display") == 0) {
-			return true;
+			opts.enable_display = true;
+		} else if (std::strcmp(argv[i], "--verbose") == 0) {
+			opts.verbose = true;
+		} else if (std::strcmp(argv[i], "--log-file") == 0) {
+			if (i + 1 >= argc) {
+				std::cerr << "ERROR: --log-file requires a path argument\n";
+				return false;
+			}
+			opts.log_file = argv[++i];
+		} else {
+			std::cerr << "ERROR: Unknown argument: " << argv[i] << '\n';
+			return false;
 		}
 	}
-	return false;
+	return true;
+}
+
+static void init_logger(const AppOptions& opts) {
+	Logger& logger = Logger::instance();
+	logger.set_level(opts.verbose ? LogLevel::Debug : LogLevel::Info);
+	if (!opts.log_file.empty()) {
+		logger.set_log_file(opts.log_file);
+		log_info("main", "Logging to file: " + opts.log_file);
+	}
 }
 
 int main(int argc, char** argv) {
-	const bool enable_display = parse_display_flag(argc, argv);
+	AppOptions opts;
+	// Logger uses default Info until init_logger runs after arg parse.
+	if (!parse_args(argc, argv, opts)) {
+		return 1;
+	}
+	init_logger(opts);
 
 	std::signal(SIGINT,  signal_handler);
 	std::signal(SIGTERM, signal_handler);
 
-	if (enable_display && std::getenv("DISPLAY") == nullptr) {
-		std::cerr << "ERROR: --display requires a graphical session (DISPLAY is unset).\n";
+	if (opts.enable_display && std::getenv("DISPLAY") == nullptr) {
+		log_error("main", "--display requires a graphical session (DISPLAY is unset)");
 		return 1;
 	}
 
@@ -46,23 +79,24 @@ int main(int argc, char** argv) {
 		CBaslerUniversalInstantCamera camera(
 			CTlFactory::GetInstance().CreateFirstDevice());
 
-		std::cout << "Camera: " << camera.GetDeviceInfo().GetModelName() << "\n";
-		if (enable_display) {
-			std::cout << "Live display enabled (helper thread). Press q or ESC in window to quit.\n";
+		log_info("main", "Camera: " + std::string(camera.GetDeviceInfo().GetModelName()));
+		if (opts.enable_display) {
+			log_info("main",
+				"Live display enabled (helper thread). Press q or ESC in window to quit.");
 		}
 
 		configure_camera(camera);
 
-		FerretTracker tracker(enable_display);
+		FerretTracker tracker(opts.enable_display);
 		camera.RegisterImageEventHandler(&tracker,
 			RegistrationMode_Append, Cleanup_None);
 
-		if (enable_display) {
+		if (opts.enable_display) {
 			display.start(&tracker, &g_running);
 			display_started = true;
 		}
 
-		std::cout << "Warming up background model — keep arena empty for 30s...\n";
+		log_info("main", "Warming up background model — keep arena empty for 30s");
 		camera.StartGrabbing(GrabStrategy_LatestImageOnly,
 			GrabLoop_ProvidedByInstantCamera);
 
@@ -71,7 +105,7 @@ int main(int argc, char** argv) {
 
 			if (!tracker.ferret.valid || !tracker.prey.valid) continue;
 
-			// Inter-animal distance
+			// Telemetry: raw stdout without logger prefix for piping/scripts.
 			float dx = tracker.ferret.pos_mm.x - tracker.prey.pos_mm.x;
 			float dy = tracker.ferret.pos_mm.y - tracker.prey.pos_mm.y;
 			float distance_mm = std::sqrt(dx * dx + dy * dy);
@@ -94,13 +128,13 @@ int main(int argc, char** argv) {
 			display.stop();
 			display_started = false;
 		}
-		std::cout << "Stopped.\n";
+		log_info("main", "Stopped");
 
 	} catch (const GenericException& e) {
 		if (display_started) {
 			display.stop();
 		}
-		std::cerr << "Pylon error: " << e.GetDescription() << "\n";
+		log_error("main", std::string("Pylon error: ") + e.GetDescription());
 		PylonTerminate();
 		return 1;
 	}
