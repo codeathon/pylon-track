@@ -32,6 +32,8 @@ pylon-track/
 ├── ferret_tracker.h
 ├── tracker.cpp           Shared Kalman filter helper
 ├── tracker.h             TrackState struct
+├── display.cpp           Live overlay window (helper thread)
+├── display.h
 └── CMakeLists.txt        Build + optional run_rt / install_udev targets
 ```
 
@@ -113,6 +115,21 @@ cmake -DOpenCV_DIR=/usr/lib/x86_64-linux-gnu/cmake/opencv4 -DPYLON_ROOT=/opt/pyl
 ./build/ferret_tracker
 ```
 
+Headless mode (default): telemetry only on stdout.
+
+### Live display (optional)
+
+```bash
+./build/ferret_tracker --display
+```
+
+- Opens an OpenCV window on a **dedicated helper thread** (~30 Hz refresh)
+- Shows the camera frame with ferret/prey contours, center markers, labels, and distance line
+- Main thread continues printing stdout telemetry in parallel
+- Quit: press **q** or **ESC** in the window (or `Ctrl+C` in the terminal)
+
+Requires a graphical session (`DISPLAY` set). For SSH, use X forwarding (`ssh -X`) or run on the machine with a monitor attached.
+
 On first launch, keep the **arena empty for 30 seconds** while the background model warms up (`WARMUP_FRAMES` in `ferret_tracker.h`).
 
 ### USB access (without root)
@@ -189,6 +206,8 @@ main loop reads TrackState → printf distance + kinematics
 | Issue | Things to check |
 |-------|-----------------|
 | `Could not find a package configuration file provided by "OpenCV"` | Install `libopencv-dev`, then use `-DOpenCV_DIR=/usr/lib/x86_64-linux-gnu/cmake/opencv4` if needed |
+| `--display` / `cannot open display` | Run on a desktop session or `ssh -X`; ensure `echo $DISPLAY` is set |
+| `chrt: Operation not permitted` (`make run_rt`) | Use `./ferret_tracker` instead, or `sudo setcap cap_sys_nice+ep build/ferret_tracker` |
 | `pylon SDK not found` | Set `-DPYLON_ROOT=` to your install prefix |
 | No camera found | USB cable, `install_udev`, camera powered |
 | No valid tracks after warmup | Lighting, gain (target ~80–100 DN background), arena contrast |
