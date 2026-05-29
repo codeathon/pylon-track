@@ -42,12 +42,37 @@ Source files still use the `ferret_tracker` name internally; the repo name refle
 | Dependency | Notes |
 |------------|--------|
 | **Basler pylon SDK** | Default path `/opt/pylon`. [Download](https://www.baslerweb.com/en/software/pylon/) |
-| **OpenCV** | `core`, `imgproc`, `video` (MOG2, contours, Kalman) |
+| **OpenCV** | `core`, `imgproc`, `video` (MOG2, contours, Kalman). Install dev headers (see below). |
 | **CMake** | ≥ 3.16 |
 | **C++ compiler** | C++17 |
 | **Hardware** | Basler USB3 camera (configured for **a2A1920-160umPRO**-class sensor at 1.2 m, 4 mm lens) |
 
 ## Build
+
+### 1. Install OpenCV (required)
+
+CMake needs the **development** package (includes `OpenCVConfig.cmake`), not just runtime libraries.
+
+**Ubuntu / Debian:**
+
+```bash
+sudo apt update
+sudo apt install -y libopencv-dev build-essential cmake
+```
+
+**Fedora:**
+
+```bash
+sudo dnf install -y opencv-devel cmake gcc-c++
+```
+
+Verify the config file exists:
+
+```bash
+ls /usr/lib/x86_64-linux-gnu/cmake/opencv4/OpenCVConfig.cmake
+```
+
+### 2. Configure and compile
 
 ```bash
 cd pylon-track
@@ -60,6 +85,12 @@ If pylon is installed elsewhere:
 
 ```bash
 cmake -DPYLON_ROOT=/path/to/pylon ..
+```
+
+If OpenCV is installed but CMake still cannot find it:
+
+```bash
+cmake -DOpenCV_DIR=/usr/lib/x86_64-linux-gnu/cmake/opencv4 -DPYLON_ROOT=/opt/pylon ..
 ```
 
 ## Run
@@ -143,6 +174,7 @@ main loop reads TrackState → printf distance + kinematics
 
 | Issue | Things to check |
 |-------|-----------------|
+| `Could not find a package configuration file provided by "OpenCV"` | Install `libopencv-dev` (Ubuntu) or `opencv-devel` (Fedora). Then use `-DOpenCV_DIR=/usr/lib/x86_64-linux-gnu/cmake/opencv4` if needed |
 | `pylon SDK not found` | Set `-DPYLON_ROOT=` to your install prefix |
 | No camera found | USB cable, `install_udev`, camera powered |
 | No valid tracks after warmup | Lighting, gain (target ~80–100 DN background), arena contrast |

@@ -31,7 +31,43 @@ if(NOT EXISTS "${PYLON_ROOT}/include/pylon/PylonIncludes.h")
 endif()
 
 # ── OpenCV ────────────────────────────────────────────────────────────────────
-find_package(OpenCV REQUIRED core imgproc video)
+# Install dev package first, e.g. Ubuntu: sudo apt install libopencv-dev
+# If cmake still fails, pass: -DOpenCV_DIR=/usr/lib/x86_64-linux-gnu/cmake/opencv4
+if(NOT OpenCV_DIR AND DEFINED ENV{OpenCV_DIR})
+	set(OpenCV_DIR "$ENV{OpenCV_DIR}" CACHE PATH "OpenCV cmake config directory")
+endif()
+
+find_package(OpenCV QUIET COMPONENTS core imgproc video)
+
+if(NOT OpenCV_FOUND)
+	# Probe common install locations before failing with a helpful message.
+	foreach(_opencv_cmake_dir
+		"/usr/lib/x86_64-linux-gnu/cmake/opencv4"
+		"/usr/lib/cmake/opencv4"
+		"/usr/local/lib/cmake/opencv4"
+		"/opt/homebrew/lib/cmake/opencv4"
+	)
+		if(EXISTS "${_opencv_cmake_dir}/OpenCVConfig.cmake")
+			set(OpenCV_DIR "${_opencv_cmake_dir}" CACHE PATH "OpenCV cmake config directory" FORCE)
+			find_package(OpenCV QUIET COMPONENTS core imgproc video)
+			if(OpenCV_FOUND)
+				break()
+			endif()
+		endif()
+	endforeach()
+endif()
+
+if(NOT OpenCV_FOUND)
+	message(FATAL_ERROR
+		"OpenCV not found (need components: core, imgproc, video).\n"
+		"  Ubuntu/Debian:  sudo apt update && sudo apt install -y libopencv-dev\n"
+		"  Fedora:         sudo dnf install opencv-devel\n"
+		"  Then reconfigure, or set OpenCV_DIR explicitly, e.g.:\n"
+		"    cmake -DOpenCV_DIR=/usr/lib/x86_64-linux-gnu/cmake/opencv4 ..")
+endif()
+
+message(STATUS "OpenCV version : ${OpenCV_VERSION}")
+message(STATUS "OpenCV includes: ${OpenCV_INCLUDE_DIRS}")
 
 # ── Platform-specific configuration ──────────────────────────────────────────
 if(UNIX)
