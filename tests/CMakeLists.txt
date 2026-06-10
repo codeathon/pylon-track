@@ -1,4 +1,4 @@
-# Calibration test suite — three camera-attached executables.
+# Calibration test suite — camera-attached executables.
 # Inherits PYLON_* and OpenCV variables from the root CMakeLists (same SDK
 # discovery; do not duplicate it here).
 
@@ -39,11 +39,10 @@ target_link_libraries(calib_common PUBLIC
 )
 
 # One executable per suite -> build/bin/.
-foreach(suite param_sweep resolution_sweep latency_suite mount_height_suite)
+# param_sweep handles both single-parameter and resolution-preset specs.
+foreach(suite param_sweep latency_suite mount_height_suite)
 	if(suite STREQUAL "param_sweep")
 		set(exe_name test_param_sweep)
-	elseif(suite STREQUAL "resolution_sweep")
-		set(exe_name test_resolution_sweep)
 	elseif(suite STREQUAL "latency_suite")
 		set(exe_name test_latency)
 	else()

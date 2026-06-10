@@ -10,14 +10,20 @@ All outputs go to `tests/output/<suite>/<timestamp>_<label>/` (gitignored).
 
 | Tool | Purpose |
 |------|---------|
-| `test_param_sweep` | Sweep one config parameter, capture labeled images + quality metrics |
-| `test_resolution_sweep` | Sweep AOI width×height presets; compare FOV (mm), fps, and image quality |
+| `test_param_sweep` | Parameter sweep **or** AOI resolution preset sweep (one binary, two JSON formats) |
 | `test_latency` | Two-object tracking benchmark: speeds, centroids, distance, latency |
 | `test_mount_height` | Per-height resolution check: annotated stills + the latency benchmark |
 
 ---
 
-## Suite 1 — Parameter sweep (`test_param_sweep`)
+## `test_param_sweep` — parameter and resolution sweeps
+
+One binary reads the sweep spec and auto-detects the mode:
+
+- JSON has `"parameter"` + `"values"` → single-parameter sweep
+- JSON has `"presets"` → AOI width×height resolution sweep
+
+### Single-parameter mode
 
 Holds every setting at the `camera_config.json` baseline and steps **one**
 parameter through the values in a sweep spec:
@@ -26,7 +32,7 @@ parameter through the values in a sweep spec:
 ./bin/test_param_sweep --sweep ../tests/sweep_configs/exposure_sweep.json
 ```
 
-Spec format (`tests/sweep_configs/*.json`):
+Spec format (`exposure_sweep.json`, `gain_sweep.json`, `frame_rate_sweep.json`):
 
 ```json
 {
@@ -52,7 +58,7 @@ How to pick a winner (see Basler notes below):
 - `achieved_fps` confirms the value doesn't choke the frame rate
   (exposure must fit the frame period: 5000 µs at 200 fps).
 
-## Suite 2 — Resolution / AOI sweep (`test_resolution_sweep`)
+### Resolution / AOI preset mode
 
 Steps through **width × height** (and optional `offset_x` / `offset_y`) presets.
 Cropping changes **field of view in mm** and achievable **fps**, not mm/px per
@@ -60,10 +66,10 @@ pixel (GSD is set by lens + mount height). Use this to pick an AOI that covers
 enough arena while sustaining the target frame rate.
 
 ```bash
-./bin/test_resolution_sweep --sweep ../tests/sweep_configs/resolution_sweep.json
+./bin/test_param_sweep --sweep ../tests/sweep_configs/resolution_sweep.json
 ```
 
-Spec format (`tests/sweep_configs/resolution_sweep.json`):
+Spec format (`resolution_sweep.json`):
 
 ```json
 {
@@ -98,7 +104,7 @@ How to pick a winner:
 - Compare sample images at the same lighting — tighter crops trade coverage
   for fps; use `test_mount_height` afterward to confirm blobs stay ≥200 px².
 
-## Suite 3 — Two-object latency benchmark (`test_latency`)
+## `test_latency` — two-object latency benchmark
 
 Runs the **production pipeline** (MOG2 background subtraction + Kalman,
 `FerretTracker`) and times grab → distance-between-objects per frame.
@@ -125,7 +131,7 @@ Latency here is host-side processing latency (grab callback → distance
 computed). USB transfer/exposure time is not included; add ~1 frame period
 for sensor-to-decision budgeting.
 
-## Suite 4 — Mounting height validation (`test_mount_height`)
+## `test_mount_height` — mounting height validation
 
 Height can't be swept automatically — mount the camera at a candidate height,
 run once per height:
