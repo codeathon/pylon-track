@@ -6,10 +6,20 @@
     "offset_y": 120,
     "exposure_auto": false,
     "exposure_time_us": 2000.0,
+    "exposure_time_mode": "Common",
     "gain_auto": false,
     "gain_db": 6.0,
     "frame_rate_enable": true,
     "frame_rate_fps": 200.0,
     "trigger_mode": "Off",
-    "device_link_throughput_limit": "Off"
+    "device_link_throughput_limit": "Off",
+    "device_link_throughput_mbps": 0.0,
+    "black_level": 0,
+    "gamma": 1.0,
+    "binning_horizontal": 1,
+    "binning_vertical": 1,
+    "binning_selector": "Sensor",
+    "scaling_horizontal": 1.0,
+    "reverse_x": false,
+    "reverse_y": false
 }

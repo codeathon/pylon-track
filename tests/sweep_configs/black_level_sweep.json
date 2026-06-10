@@ -1,0 +1,6 @@
+{
+	"parameter": "black_level",
+	"values": [0, 8, 16, 32, 48, 64],
+	"frames_per_value": 50,
+	"save_images": 2
+}

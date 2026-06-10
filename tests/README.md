@@ -10,18 +10,61 @@ All outputs go to `tests/output/<suite>/<timestamp>_<label>/` (gitignored).
 
 | Tool | Purpose |
 |------|---------|
-| `test_param_sweep` | Parameter sweep **or** AOI resolution preset sweep (one binary, two JSON formats) |
+| `test_one_time_setup` | Apply fixed rig settings once; verification frame + `setup_report.json` |
+| `test_param_sweep` | Parameter sweeps + resolution / binning / compound camera presets |
 | `test_latency` | Two-object tracking benchmark: speeds, centroids, distance, latency |
 | `test_mount_height` | Per-height resolution check: annotated stills + the latency benchmark |
 
 ---
 
-## `test_param_sweep` — parameter and resolution sweeps
+## `test_one_time_setup` — one-time rig settings
 
-One binary reads the sweep spec and auto-detects the mode:
+Run **once** after mounting the camera, changing the lens, or relighting the arena.
+Applies the fixed `camera` block from `one_time_settings.json`, grabs a short
+verification capture, read backs GenICam values, and writes `setup_report.json`.
 
-- JSON has `"parameter"` + `"values"` → single-parameter sweep
-- JSON has `"presets"` → AOI width×height resolution sweep
+Flat-field / vignetting correction is still manual in pylon Viewer — see
+`manual_steps` in the JSON.
+
+```bash
+./bin/test_one_time_setup --settings ../tests/one_time_settings.json
+```
+
+Outputs: `setup_report.json`, one verification PNG, pass/fail on mean gray,
+clipping, and fps vs target.
+
+After a pass, copy the `applied_settings` block into `src/camera_config.json`.
+
+---
+
+## `test_param_sweep` — parameter and preset sweeps
+
+One binary auto-detects the spec format:
+
+| Spec shape | Mode | Output CSV |
+|------------|------|------------|
+| `"parameter"` + `"values"` | Single-parameter sweep | `sweep.csv` |
+| `"presets"` (default) | AOI width×height resolution | `resolution.csv` |
+| `"presets"` + `"preset_type": "binning"` | Binning combinations | `binning.csv` |
+| `"presets"` + `"preset_type": "camera"` | Compound presets (exposure mode, throughput, …) | `camera_preset.csv` |
+
+### Available sweep configs (`tests/sweep_configs/`)
+
+| File | What it sweeps |
+|------|----------------|
+| `exposure_sweep.json` | Exposure (250–4000 µs) |
+| `exposure_extended_sweep.json` | Exposure 19 µs–5000 µs (common mode) |
+| `ultra_short_exposure_sweep.json` | Common + UltraShort exposure presets |
+| `gain_sweep.json` | Gain 0–24 dB |
+| `frame_rate_sweep.json` | Target fps cap |
+| `frame_rate_enable_sweep.json` | Capped vs free-run max fps |
+| `resolution_sweep.json` | 16 AOI width×height×offset combos |
+| `offset_x_sweep.json` / `offset_y_sweep.json` | AOI centering |
+| `black_level_sweep.json` | Black level 0–64 |
+| `gamma_sweep.json` | Gamma 0.5–2.0 |
+| `scaling_sweep.json` | In-camera scaling (requires binning off) |
+| `binning_sweep.json` | Sensor vs FPGA binning 1×1–4×4 |
+| `throughput_sweep.json` | USB throughput limit on/off |
 
 ### Single-parameter mode
 
@@ -32,7 +75,10 @@ parameter through the values in a sweep spec:
 ./bin/test_param_sweep --sweep ../tests/sweep_configs/exposure_sweep.json
 ```
 
-Spec format (`exposure_sweep.json`, `gain_sweep.json`, `frame_rate_sweep.json`):
+Recommended order: **one_time_setup** → **exposure** → **gain** → **resolution**
+→ **offset_y** (fine-tune) → **mount_height** → **latency**.
+
+Spec format (single-parameter):
 
 ```json
 {
@@ -103,6 +149,51 @@ How to pick a winner:
 - `achieved_fps` should meet or exceed your tracking target (e.g. 200).
 - Compare sample images at the same lighting — tighter crops trade coverage
   for fps; use `test_mount_height` afterward to confirm blobs stay ≥200 px².
+
+### Binning preset mode
+
+```bash
+./bin/test_param_sweep --sweep ../tests/sweep_configs/binning_sweep.json
+```
+
+```json
+{
+	"preset_type": "binning",
+	"presets": [
+		{
+			"label": "sensor_2x2",
+			"binning_selector": "Sensor",
+			"binning_horizontal": 2,
+			"binning_vertical": 2
+		}
+	]
+}
+```
+
+2×2 binning doubles effective pixel size — rescale GSD and re-run
+`test_mount_height` before trusting mm measurements.
+
+### Compound camera preset mode
+
+For settings that must change together (exposure mode + exposure time,
+throughput cap + Mbps):
+
+```bash
+./bin/test_param_sweep --sweep ../tests/sweep_configs/ultra_short_exposure_sweep.json
+```
+
+```json
+{
+	"preset_type": "camera",
+	"presets": [
+		{
+			"label": "ultra_5us",
+			"exposure_time_mode": "UltraShort",
+			"exposure_time_us": 5
+		}
+	]
+}
+```
 
 ## `test_latency` — two-object latency benchmark
 

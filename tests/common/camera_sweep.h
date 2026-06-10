@@ -24,7 +24,10 @@ struct CaptureResult {
 bool apply_camera_override(CameraSettings& settings, const std::string& key,
 	const nlohmann::json& value);
 
-// Apply width/height/offset fields from a resolution preset object.
+// Apply any known camera_config fields from a preset object (width, binning, …).
+bool apply_sweep_preset(CameraSettings& settings, const nlohmann::json& preset);
+
+// Back-compat alias used by resolution sweeps.
 bool apply_resolution_preset(CameraSettings& settings,
 	const nlohmann::json& preset);
 

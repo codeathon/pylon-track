@@ -4,32 +4,116 @@
 	"save_images": 2,
 	"presets": [
 		{
-			"label": "production_1920x960",
+			"label": "production_1920x960_y120",
 			"width": 1920,
 			"height": 960,
 			"offset_x": 0,
 			"offset_y": 120
 		},
 		{
-			"label": "full_width_1920x1200",
+			"label": "full_1920x1200",
 			"width": 1920,
 			"height": 1200,
 			"offset_x": 0,
 			"offset_y": 0
 		},
 		{
-			"label": "center_crop_1280x640",
+			"label": "full_1936x1216",
+			"width": 1936,
+			"height": 1216,
+			"offset_x": 0,
+			"offset_y": 0
+		},
+		{
+			"label": "wide_1920x800_y200",
+			"width": 1920,
+			"height": 800,
+			"offset_x": 0,
+			"offset_y": 200
+		},
+		{
+			"label": "wide_1920x720_y240",
+			"width": 1920,
+			"height": 720,
+			"offset_x": 0,
+			"offset_y": 240
+		},
+		{
+			"label": "tall_1600x1200_x160",
+			"width": 1600,
+			"height": 1200,
+			"offset_x": 160,
+			"offset_y": 0
+		},
+		{
+			"label": "center_1600x800_x160_y200",
+			"width": 1600,
+			"height": 800,
+			"offset_x": 160,
+			"offset_y": 200
+		},
+		{
+			"label": "center_1280x640_x320_y280",
 			"width": 1280,
 			"height": 640,
 			"offset_x": 320,
 			"offset_y": 280
 		},
 		{
-			"label": "tight_crop_960x480",
+			"label": "center_1280x720_x320_y240",
+			"width": 1280,
+			"height": 720,
+			"offset_x": 320,
+			"offset_y": 240
+		},
+		{
+			"label": "tight_960x480_x480_y360",
 			"width": 960,
 			"height": 480,
 			"offset_x": 480,
 			"offset_y": 360
+		},
+		{
+			"label": "tight_1024x512_x448_y352",
+			"width": 1024,
+			"height": 512,
+			"offset_x": 448,
+			"offset_y": 352
+		},
+		{
+			"label": "offset_y80_1920x960",
+			"width": 1920,
+			"height": 960,
+			"offset_x": 0,
+			"offset_y": 80
+		},
+		{
+			"label": "offset_y160_1920x960",
+			"width": 1920,
+			"height": 960,
+			"offset_x": 0,
+			"offset_y": 160
+		},
+		{
+			"label": "offset_y200_1920x960",
+			"width": 1920,
+			"height": 960,
+			"offset_x": 0,
+			"offset_y": 200
+		},
+		{
+			"label": "left_crop_1280x960_x0_y120",
+			"width": 1280,
+			"height": 960,
+			"offset_x": 0,
+			"offset_y": 120
+		},
+		{
+			"label": "right_crop_1280x960_x640_y120",
+			"width": 1280,
+			"height": 960,
+			"offset_x": 640,
+			"offset_y": 120
 		}
 	]
 }

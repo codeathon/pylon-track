@@ -1,0 +1,37 @@
+{
+	"preset_type": "binning",
+	"frames_per_preset": 50,
+	"save_images": 2,
+	"presets": [
+		{
+			"label": "no_binning",
+			"binning_selector": "Sensor",
+			"binning_horizontal": 1,
+			"binning_vertical": 1
+		},
+		{
+			"label": "sensor_2x2",
+			"binning_selector": "Sensor",
+			"binning_horizontal": 2,
+			"binning_vertical": 2
+		},
+		{
+			"label": "fpga_2x2",
+			"binning_selector": "FPGA",
+			"binning_horizontal": 2,
+			"binning_vertical": 2
+		},
+		{
+			"label": "fpga_3x3",
+			"binning_selector": "FPGA",
+			"binning_horizontal": 3,
+			"binning_vertical": 3
+		},
+		{
+			"label": "fpga_4x4",
+			"binning_selector": "FPGA",
+			"binning_horizontal": 4,
+			"binning_vertical": 4
+		}
+	]
+}

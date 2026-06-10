@@ -13,6 +13,7 @@ using nlohmann::json;
 
 bool apply_camera_override(CameraSettings& s, const std::string& key, const json& v) {
 	if (key == "exposure_time_us") { s.exposure_time_us = v.get<double>(); return true; }
+	if (key == "exposure_time_mode") { s.exposure_time_mode = v.get<std::string>(); return true; }
 	if (key == "gain_db") { s.gain_db = v.get<double>(); return true; }
 	if (key == "frame_rate_fps") { s.frame_rate_fps = v.get<double>(); return true; }
 	if (key == "width") { s.width = v.get<int>(); return true; }
@@ -27,20 +28,37 @@ bool apply_camera_override(CameraSettings& s, const std::string& key, const json
 	if (key == "device_link_throughput_limit") {
 		s.device_link_throughput_limit = v.get<std::string>(); return true;
 	}
+	if (key == "device_link_throughput_mbps") {
+		s.device_link_throughput_mbps = v.get<double>(); return true;
+	}
+	if (key == "black_level") { s.black_level = v.get<int>(); return true; }
+	if (key == "gamma") { s.gamma = v.get<double>(); return true; }
+	if (key == "binning_horizontal") { s.binning_horizontal = v.get<int>(); return true; }
+	if (key == "binning_vertical") { s.binning_vertical = v.get<int>(); return true; }
+	if (key == "binning_selector") { s.binning_selector = v.get<std::string>(); return true; }
+	if (key == "scaling_horizontal") { s.scaling_horizontal = v.get<double>(); return true; }
+	if (key == "reverse_x") { s.reverse_x = v.get<bool>(); return true; }
+	if (key == "reverse_y") { s.reverse_y = v.get<bool>(); return true; }
 	return false;
 }
 
 bool apply_resolution_preset(CameraSettings& s, const json& preset) {
+	return apply_sweep_preset(s, preset);
+}
+
+bool apply_sweep_preset(CameraSettings& s, const json& preset) {
+	bool applied = false;
+	for (auto it = preset.begin(); it != preset.end(); ++it) {
+		const std::string& key = it.key();
+		if (key == "label") {
+			continue;
+		}
+		if (apply_camera_override(s, key, it.value())) {
+			applied = true;
+		}
+	}
 	if (!preset.contains("width") || !preset.contains("height")) {
-		return false;
-	}
-	s.width = preset.at("width").get<int>();
-	s.height = preset.at("height").get<int>();
-	if (preset.contains("offset_x")) {
-		s.offset_x = preset.at("offset_x").get<int>();
-	}
-	if (preset.contains("offset_y")) {
-		s.offset_y = preset.at("offset_y").get<int>();
+		return applied;
 	}
 	return true;
 }

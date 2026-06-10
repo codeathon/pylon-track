@@ -10,12 +10,25 @@ struct CameraSettings {
 	int offset_y = 120;
 	bool exposure_auto = false;
 	double exposure_time_us = 2000.0;
+	// Common (19 µs–10 s) or UltraShort (1–14 µs) on a2A1920-160umPRO.
+	std::string exposure_time_mode = "Common";
 	bool gain_auto = false;
 	double gain_db = 6.0;
 	bool frame_rate_enable = true;
 	double frame_rate_fps = 200.0;
 	std::string trigger_mode = "Off";
 	std::string device_link_throughput_limit = "Off";
+	// When > 0 and mode is On, caps USB throughput (bytes/s set from Mbps).
+	double device_link_throughput_mbps = 0.0;
+	int black_level = 0;
+	double gamma = 1.0;
+	int binning_horizontal = 1;
+	int binning_vertical = 1;
+	// FPGA or Sensor — ace 2 supports both; Sensor 2×2 is true pixel combine.
+	std::string binning_selector = "Sensor";
+	double scaling_horizontal = 1.0;
+	bool reverse_x = false;
+	bool reverse_y = false;
 };
 
 // Load camera settings from JSON; returns false and logs on failure.

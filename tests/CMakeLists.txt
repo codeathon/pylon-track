@@ -40,11 +40,13 @@ target_link_libraries(calib_common PUBLIC
 
 # One executable per suite -> build/bin/.
 # param_sweep handles both single-parameter and resolution-preset specs.
-foreach(suite param_sweep latency_suite mount_height_suite)
+foreach(suite param_sweep latency_suite mount_height_suite one_time_suite)
 	if(suite STREQUAL "param_sweep")
 		set(exe_name test_param_sweep)
 	elseif(suite STREQUAL "latency_suite")
 		set(exe_name test_latency)
+	elseif(suite STREQUAL "one_time_suite")
+		set(exe_name test_one_time_setup)
 	else()
 		set(exe_name test_mount_height)
 	endif()

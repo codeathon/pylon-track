@@ -50,13 +50,15 @@ pylon-track/
 │   ├── README.md             Full run protocols + Basler calibration notes
 │   ├── common/               Shared: session dirs, CSV writer, image metrics
 │   ├── sweep_configs/        Example parameter sweep specs (JSON)
-│   ├── param_sweep.cpp       Config + resolution sweeps → test_param_sweep
+│   ├── one_time_suite.cpp      One-time rig setup → test_one_time_setup
+│   ├── param_sweep.cpp       Config + preset sweeps → test_param_sweep
 │   ├── latency_suite.cpp     Latency benchmark → test_latency
 │   └── mount_height_suite.cpp Mount height validation → test_mount_height
 └── build/                    Out-of-source build (created by you)
     └── bin/
         ├── ferret_tracker      Production tracker
-        ├── test_param_sweep    Calibration: parameter + resolution sweeps
+        ├── test_one_time_setup Calibration: one-time rig settings + report
+        ├── test_param_sweep    Calibration: parameter + preset sweeps
         ├── test_latency        Calibration: two-object latency benchmark
         ├── test_mount_height   Calibration: mounting height validation
         └── camera_config.json  Copied from src/ at build time
@@ -286,11 +288,12 @@ Full run protocols, CSV column definitions, and Basler image-quality guidance:
 
 | Tool | Question it answers |
 |------|---------------------|
-| `test_param_sweep` | Best exposure / gain / fps **or** AOI crop (two JSON spec formats) |
+| `test_one_time_setup` | Are fixed rig settings applied and verified (one-time per mount/lens/light)? |
+| `test_param_sweep` | Best exposure / gain / fps / AOI / binning / black level / … (see `sweep_configs/`) |
 | `test_latency` | How fast does grab → distance-between-objects run at fixed capture rate? |
 | `test_mount_height` | At this height, do objects still resolve (≥200 px²) and measure accurately? |
 
-Recommended order: **param sweep** (exposure/gain, then resolution preset) →
+Recommended order: **one_time_setup** → **param sweeps** (exposure/gain, resolution, …) →
 **mount height** at candidate heights → **latency** at each height to confirm
 distance accuracy.
 
@@ -299,6 +302,7 @@ distance accuracy.
 Built by default with `make` (see [Build](#build)). Binaries:
 
 ```text
+build/bin/test_one_time_setup
 build/bin/test_param_sweep
 build/bin/test_latency
 build/bin/test_mount_height
@@ -306,9 +310,20 @@ build/bin/test_mount_height
 
 Outputs land in `tests/output/<suite>/<timestamp>_<label>/` (gitignored).
 
-### `test_param_sweep` — parameter and resolution sweeps
+### `test_one_time_setup` — one-time rig settings
 
-One binary, two JSON spec formats (auto-detected):
+```bash
+./bin/test_one_time_setup --settings ../tests/one_time_settings.json
+```
+
+Applies fixed settings from JSON, captures a verification frame, writes
+`setup_report.json`. Flat-field still requires pylon Viewer (see `manual_steps`).
+
+### `test_param_sweep` — parameter and preset sweeps
+
+One binary; spec format auto-detected (`parameter`+`values`, or `presets` with
+optional `preset_type`: `resolution` | `binning` | `camera`). Full list:
+[`tests/sweep_configs/`](tests/sweep_configs/).
 
 **Single-parameter** — holds every other setting at the `camera_config.json`
 baseline and steps one field (exposure, gain, fps, …):
@@ -318,7 +333,8 @@ cd build
 ./bin/test_param_sweep --sweep ../tests/sweep_configs/exposure_sweep.json
 ```
 
-Specs: `exposure_sweep.json`, `gain_sweep.json`, `frame_rate_sweep.json`.
+Specs include `exposure_sweep.json`, `gain_sweep.json`, `black_level_sweep.json`,
+`resolution_sweep.json` (16 AOI combos), `binning_sweep.json`, etc.
 Outputs: `sweep.csv` + sample PNGs. Pick mean gray ~128–180, low clipping,
 high Laplacian variance.
 
@@ -389,7 +405,8 @@ metric interpretation.
 | Target | Command | Description |
 |--------|---------|-------------|
 | `ferret_tracker` | `make ferret_tracker` | Production tracker executable |
-| `test_param_sweep` | `make test_param_sweep` | Calibration: parameter + resolution sweeps |
+| `test_one_time_setup` | `make test_one_time_setup` | Calibration: one-time rig settings |
+| `test_param_sweep` | `make test_param_sweep` | Calibration: parameter + preset sweeps |
 | `test_latency` | `make test_latency` | Calibration: latency benchmark |
 | `test_mount_height` | `make test_mount_height` | Calibration: mount height validation |
 | `run_rt` | `make run_rt` | Run with SCHED_FIFO priority |

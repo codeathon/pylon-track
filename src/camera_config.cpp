@@ -35,6 +35,54 @@ T require_field(const nlohmann::json& j, const char* key) {
 	return j.at(key).get<T>();
 }
 
+void apply_binning_selector(CBaslerUniversalInstantCamera& cam,
+	const std::string& selector)
+{
+	if (selector == "FPGA") {
+		cam.BinningSelector.SetValue(BinningSelector_FPGA);
+	} else if (selector == "Sensor") {
+		cam.BinningSelector.SetValue(BinningSelector_Sensor);
+	} else {
+		throw std::runtime_error("Unsupported binning_selector: " + selector);
+	}
+}
+
+void apply_exposure_time_mode(CBaslerUniversalInstantCamera& cam,
+	const std::string& mode)
+{
+	if (mode == "Common") {
+		cam.BslExposureTimeMode.SetValue(BslExposureTimeMode_Common);
+	} else if (mode == "UltraShort") {
+		cam.BslExposureTimeMode.SetValue(BslExposureTimeMode_UltraShort);
+	} else {
+		throw std::runtime_error("Unsupported exposure_time_mode: " + mode);
+	}
+}
+
+void apply_throughput_limit(CBaslerUniversalInstantCamera& cam,
+	const CameraSettings& s)
+{
+	if (s.device_link_throughput_limit == "Off") {
+		cam.DeviceLinkThroughputLimitMode.SetValue(
+			DeviceLinkThroughputLimitMode_Off);
+		return;
+	}
+	if (s.device_link_throughput_limit != "On") {
+		throw std::runtime_error(
+			"Unsupported device_link_throughput_limit: "
+			+ s.device_link_throughput_limit);
+	}
+	if (s.device_link_throughput_mbps <= 0.0) {
+		throw std::runtime_error(
+			"device_link_throughput_mbps required when throughput limit is On");
+	}
+	// GenICam limit is bytes/s; sweep specs use Mbps for readability.
+	const int64_t bytes_per_s = static_cast<int64_t>(
+		s.device_link_throughput_mbps * 1e6 / 8.0);
+	cam.DeviceLinkThroughputLimitMode.SetValue(DeviceLinkThroughputLimitMode_On);
+	cam.DeviceLinkThroughputLimit.SetValue(bytes_per_s);
+}
+
 } // namespace
 
 std::string resolve_camera_config_path(const char* argv0,
@@ -59,7 +107,6 @@ std::string resolve_camera_config_path(const char* argv0,
 		return src_relative;
 	}
 
-	// Fallback for cmake copy target path when cwd is build/.
 	if (file_exists("bin/camera_config.json")) {
 		return "bin/camera_config.json";
 	}
@@ -97,6 +144,18 @@ bool load_camera_config(const std::string& path, CameraSettings& out) {
 		out.trigger_mode = require_field<std::string>(j, "trigger_mode");
 		out.device_link_throughput_limit =
 			require_field<std::string>(j, "device_link_throughput_limit");
+		// Optional fields — older camera_config.json copies still load.
+		out.exposure_time_mode = j.value("exposure_time_mode", "Common");
+		out.device_link_throughput_mbps =
+			j.value("device_link_throughput_mbps", 0.0);
+		out.black_level = j.value("black_level", 0);
+		out.gamma = j.value("gamma", 1.0);
+		out.binning_horizontal = j.value("binning_horizontal", 1);
+		out.binning_vertical = j.value("binning_vertical", 1);
+		out.binning_selector = j.value("binning_selector", "Sensor");
+		out.scaling_horizontal = j.value("scaling_horizontal", 1.0);
+		out.reverse_x = j.value("reverse_x", false);
+		out.reverse_y = j.value("reverse_y", false);
 	} catch (const std::exception& e) {
 		log_error("camera", std::string("Invalid camera config in ") + path + ": " + e.what());
 		return false;
@@ -113,10 +172,38 @@ void configure_camera(CBaslerUniversalInstantCamera& cam, const CameraSettings& 
 	}
 	cam.PixelFormat.SetValue(PixelFormat_Mono8);
 
+	const bool use_binning = s.binning_horizontal > 1 || s.binning_vertical > 1;
+	const bool use_scaling = s.scaling_horizontal > 0.0
+		&& s.scaling_horizontal < 1.0 - 1e-6;
+
+	// Binning and scaling are mutually exclusive on ace 2.
+	if (use_binning) {
+		apply_binning_selector(cam, s.binning_selector);
+		cam.BinningHorizontal.SetValue(s.binning_horizontal);
+		cam.BinningVertical.SetValue(s.binning_vertical);
+		cam.ScalingHorizontal.SetValue(1.0);
+	} else if (use_scaling) {
+		cam.BinningHorizontal.SetValue(1);
+		cam.BinningVertical.SetValue(1);
+		cam.ScalingHorizontal.SetValue(s.scaling_horizontal);
+	} else {
+		cam.BinningHorizontal.SetValue(1);
+		cam.BinningVertical.SetValue(1);
+		cam.ScalingHorizontal.SetValue(1.0);
+	}
+
 	cam.Width.SetValue(s.width);
 	cam.Height.SetValue(s.height);
 	cam.OffsetX.SetValue(s.offset_x);
 	cam.OffsetY.SetValue(s.offset_y);
+
+	cam.ReverseX.SetValue(s.reverse_x);
+	cam.ReverseY.SetValue(s.reverse_y);
+
+	cam.BlackLevel.SetValue(s.black_level);
+	cam.Gamma.SetValue(s.gamma);
+
+	apply_exposure_time_mode(cam, s.exposure_time_mode);
 
 	cam.ExposureAuto.SetValue(s.exposure_auto ? ExposureAuto_Continuous : ExposureAuto_Off);
 	if (!s.exposure_auto) {
@@ -139,18 +226,18 @@ void configure_camera(CBaslerUniversalInstantCamera& cam, const CameraSettings& 
 		throw std::runtime_error("Unsupported trigger_mode: " + s.trigger_mode);
 	}
 
-	if (s.device_link_throughput_limit == "Off") {
-		cam.DeviceLinkThroughputLimitMode.SetValue(DeviceLinkThroughputLimitMode_Off);
-	} else {
-		throw std::runtime_error(
-			"Unsupported device_link_throughput_limit: " + s.device_link_throughput_limit);
-	}
+	apply_throughput_limit(cam, s);
 
 	std::ostringstream oss;
 	oss << "Applied " << s.pixel_format << " " << s.width << "x" << s.height
 		<< " offset=(" << s.offset_x << "," << s.offset_y << ")"
+		<< " binning=" << s.binning_horizontal << "x" << s.binning_vertical
+		<< "(" << s.binning_selector << ")"
+		<< " scale=" << s.scaling_horizontal
+		<< " exposure_mode=" << s.exposure_time_mode
 		<< " exposure=" << s.exposure_time_us << "us"
 		<< " gain=" << s.gain_db << "dB"
+		<< " black=" << s.black_level << " gamma=" << s.gamma
 		<< " fps=" << s.frame_rate_fps;
 	log_info("camera", oss.str());
 }
