@@ -4,6 +4,10 @@ Real-time dual-animal tracking from a Basler USB3 camera using the [Basler pylon
 
 **Platform:** Linux only (tested workflow targets Ubuntu with USB3 Basler cameras).
 
+A companion **calibration test suite** under [`tests/`](tests/) sweeps camera settings,
+benchmarks two-object tracking latency, and validates mounting height — see
+[Calibration and testing](#calibration-and-testing).
+
 ## What it does
 
 1. Opens the first available Basler camera (`CBaslerUniversalInstantCamera`).
@@ -42,9 +46,19 @@ pylon-track/
 │   ├── tracker.cpp           Shared Kalman filter helper
 │   ├── display.cpp           Live overlay window (helper thread)
 │   └── logger.cpp
+├── tests/                    Camera calibration suite (hardware-in-the-loop)
+│   ├── README.md             Full run protocols + Basler calibration notes
+│   ├── common/               Shared: session dirs, CSV writer, image metrics
+│   ├── sweep_configs/        Example parameter sweep specs (JSON)
+│   ├── param_sweep.cpp       Suite 1 → test_param_sweep
+│   ├── latency_suite.cpp     Suite 2 → test_latency
+│   └── mount_height_suite.cpp Suite 3 → test_mount_height
 └── build/                    Out-of-source build (created by you)
     └── bin/
-        ├── ferret_tracker      Executable output
+        ├── ferret_tracker      Production tracker
+        ├── test_param_sweep    Calibration: config parameter sweep
+        ├── test_latency          Calibration: two-object latency benchmark
+        ├── test_mount_height     Calibration: mounting height validation
         └── camera_config.json  Copied from src/ at build time
 ```
 
@@ -107,8 +121,12 @@ ls /usr/lib/x86_64-linux-gnu/cmake/opencv4/OpenCVConfig.cmake
 cd pylon-track
 mkdir -p build && cd build
 cmake -DPYLON_ROOT=/opt/pylon ..
-make ferret_tracker
+make
 ```
+
+This builds `ferret_tracker` and the calibration tools (`test_param_sweep`,
+`test_latency`, `test_mount_height`). Disable the suite with
+`-DBUILD_CALIBRATION_TESTS=OFF` if you only need the production binary.
 
 If pylon is installed elsewhere:
 
@@ -254,11 +272,118 @@ OnImageGrabbed (zero-copy cv::Mat on frame buffer)
 main loop reads TrackState → printf distance + kinematics
 ```
 
+## Calibration and testing
+
+Hardware-in-the-loop tools under [`tests/`](tests/) help choose `camera_config.json`
+values, quantify tracking latency, and validate camera mounting height. These are
+**not automated unit tests** — each tool needs the Basler camera attached on the
+lab Linux box.
+
+Full run protocols, CSV column definitions, and Basler image-quality guidance:
+[`tests/README.md`](tests/README.md).
+
+### Why three suites
+
+| Suite | Binary | Question it answers |
+|-------|--------|---------------------|
+| 1 — Parameter sweep | `test_param_sweep` | Which exposure / gain / fps gives the best image for tracking? |
+| 2 — Latency benchmark | `test_latency` | How fast does grab → distance-between-objects run at fixed capture rate? |
+| 3 — Mount height | `test_mount_height` | At this height, do objects still resolve (≥200 px²) and measure accurately? |
+
+Recommended order: **suite 1** (lock imaging) → **suite 3** at candidate heights
+(operator adjusts mount between runs) → **suite 2** at each height to confirm
+latency and distance accuracy.
+
+### Build calibration tools
+
+Built by default with `make` (see [Build](#build)). Binaries:
+
+```text
+build/bin/test_param_sweep
+build/bin/test_latency
+build/bin/test_mount_height
+```
+
+Outputs land in `tests/output/<suite>/<timestamp>_<label>/` (gitignored).
+
+### Suite 1 — Parameter sweep
+
+Holds every setting at the `camera_config.json` baseline and steps **one**
+parameter through values from a sweep spec JSON:
+
+```bash
+cd build
+./bin/test_param_sweep --sweep ../tests/sweep_configs/exposure_sweep.json
+```
+
+Example specs in [`tests/sweep_configs/`](tests/sweep_configs/) (`exposure_sweep.json`,
+`gain_sweep.json`, `frame_rate_sweep.json`). Per run:
+
+- `sweep.csv` — achieved fps, mean gray, stddev, clipped-pixel %, Laplacian variance
+- Sample PNGs — `<timestamp>_<parameter>_<value>_fNNN.png`
+
+Pick values where mean gray is ~128–180, clipping is near zero, and Laplacian
+variance is high without excessive gain noise.
+
+### Suite 2 — Two-object latency benchmark
+
+Runs the **same pipeline** as production (`FerretTracker`: MOG2 + Kalman) and
+records per-frame kinematics plus grab-to-distance latency:
+
+```bash
+./bin/test_latency --duration 30 --warmup-secs 30
+```
+
+Protocol: keep the arena **empty** during warmup, then move two objects at
+known speeds (slow / medium / fast across separate runs).
+
+Per run:
+
+- `frames.csv` — speeds, centroids (px and mm), distance (mm), `latency_us`, validity flags
+- `summary.csv` — achieved fps, valid-pair %, latency mean / p50 / p95 / max
+
+Shared flags: `--camera-config`, `--output`, `--gsd`, `--verbose`.
+
+### Suite 3 — Mounting height validation
+
+Operator-in-the-loop: mount the camera at a candidate height, then:
+
+```bash
+./bin/test_mount_height --height-cm 120 --duration 30
+```
+
+- Rescales GSD from the 1.2 m baseline (`1.035 mm/px × height / 120`)
+- Saves annotated stills (~1 Hz) in `stills/` — contours, boxes, blob area in px²
+- Runs the suite-2 measurement loop; `frames.csv` includes `height_cm`
+
+Compare `distance_mm` in the CSV against a tape-measured separation. Repeat at
+each candidate height (e.g. 100, 120, 150 cm) and compare stills for blobs
+above the 200 px² tracking floor.
+
+### Basler calibration (summary)
+
+Distilled from [Basler image-quality docs](https://docs.baslerweb.com/optimizing-image-quality):
+
+- **Motion blur:** `blur_px = speed_mm_s × exposure_s / GSD` — keep under ~1 px;
+  at 1 m/s and 1.035 mm/px, exposure should stay under ~1 ms.
+- **Brightness:** target ~50–70 % of Mono8 range; avoid clipping at 0 or 255.
+- **Gain:** amplifies noise equally with signal — prefer light/exposure first.
+- **Frame period:** at 200 fps, exposure must fit within ~5000 µs minus readout.
+- **pylon Viewer:** use *Automatic Image Adjustment* for a baseline, then lock
+  values into `camera_config.json`; *Flat-Field Correction* for vignetting with
+  the 4 mm lens.
+
+See [`tests/README.md`](tests/README.md) for the full GSD-vs-height table and
+metric interpretation.
+
 ## CMake targets
 
 | Target | Command | Description |
 |--------|---------|-------------|
-| `ferret_tracker` | `make ferret_tracker` | Build executable |
+| `ferret_tracker` | `make ferret_tracker` | Production tracker executable |
+| `test_param_sweep` | `make test_param_sweep` | Calibration: parameter sweep |
+| `test_latency` | `make test_latency` | Calibration: latency benchmark |
+| `test_mount_height` | `make test_mount_height` | Calibration: mount height validation |
 | `run_rt` | `make run_rt` | Run with SCHED_FIFO priority |
 | `install_udev` | `make install_udev` | Install Basler USB udev rules |
 
@@ -274,6 +399,9 @@ main loop reads TrackState → printf distance + kinematics
 | No valid tracks after warmup | Lighting, gain (target ~80–100 DN background), arena contrast |
 | Low frame rate | AOI size, `DeviceLinkThroughputLimitMode`, USB3 port |
 | High jitter | `make run_rt`, CPU isolation, reduce pipeline load |
+| Calibration tools missing after build | Ensure `BUILD_CALIBRATION_TESTS=ON` (default); run `make` not only `make ferret_tracker` |
+| `test_latency` valid-pair % low | Empty arena during warmup; two distinct moving blobs; check contour area ≥200 px² |
+| Sweep images all dark / clipped | Adjust `tests/sweep_configs/` ranges; brighten arena lighting before sweeping gain |
 
 ## License
 
