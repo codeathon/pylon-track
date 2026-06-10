@@ -38,8 +38,10 @@ T require_field(const nlohmann::json& j, const char* key) {
 void apply_binning_selector(CBaslerUniversalInstantCamera& cam,
 	const std::string& selector)
 {
-	if (selector == "FPGA") {
-		cam.BinningSelector.SetValue(BinningSelector_FPGA);
+	// ace 2 USB GenICam values: Region1 = FPGA binning, Sensor = sensor binning.
+	// JSON specs use "FPGA" as a readable alias for Region1.
+	if (selector == "FPGA" || selector == "Region1") {
+		cam.BinningSelector.SetValue(BinningSelector_Region1);
 	} else if (selector == "Sensor") {
 		cam.BinningSelector.SetValue(BinningSelector_Sensor);
 	} else {
@@ -50,8 +52,9 @@ void apply_binning_selector(CBaslerUniversalInstantCamera& cam,
 void apply_exposure_time_mode(CBaslerUniversalInstantCamera& cam,
 	const std::string& mode)
 {
-	if (mode == "Common") {
-		cam.BslExposureTimeMode.SetValue(BslExposureTimeMode_Common);
+	// ace 2 USB: Standard (not "Common") and UltraShort.
+	if (mode == "Common" || mode == "Standard") {
+		cam.BslExposureTimeMode.SetValue(BslExposureTimeMode_Standard);
 	} else if (mode == "UltraShort") {
 		cam.BslExposureTimeMode.SetValue(BslExposureTimeMode_UltraShort);
 	} else {
@@ -145,7 +148,7 @@ bool load_camera_config(const std::string& path, CameraSettings& out) {
 		out.device_link_throughput_limit =
 			require_field<std::string>(j, "device_link_throughput_limit");
 		// Optional fields — older camera_config.json copies still load.
-		out.exposure_time_mode = j.value("exposure_time_mode", "Common");
+		out.exposure_time_mode = j.value("exposure_time_mode", "Standard");
 		out.device_link_throughput_mbps =
 			j.value("device_link_throughput_mbps", 0.0);
 		out.black_level = j.value("black_level", 0);
