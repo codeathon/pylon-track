@@ -50,17 +50,15 @@ pylon-track/
 │   ├── README.md             Full run protocols + Basler calibration notes
 │   ├── common/               Shared: session dirs, CSV writer, image metrics
 │   ├── sweep_configs/        Example parameter sweep specs (JSON)
-│   ├── param_sweep.cpp       Suite 1 → test_param_sweep
-│   ├── resolution_sweep.cpp  Suite 2 → test_resolution_sweep
-│   ├── latency_suite.cpp     Suite 3 → test_latency
-│   └── mount_height_suite.cpp Suite 4 → test_mount_height
+│   ├── param_sweep.cpp       Config + resolution sweeps → test_param_sweep
+│   ├── latency_suite.cpp     Latency benchmark → test_latency
+│   └── mount_height_suite.cpp Mount height validation → test_mount_height
 └── build/                    Out-of-source build (created by you)
     └── bin/
         ├── ferret_tracker      Production tracker
-        ├── test_param_sweep        Calibration: config parameter sweep
-        ├── test_resolution_sweep   Calibration: AOI / resolution preset sweep
-        ├── test_latency            Calibration: two-object latency benchmark
-        ├── test_mount_height       Calibration: mounting height validation
+        ├── test_param_sweep    Calibration: parameter + resolution sweeps
+        ├── test_latency        Calibration: two-object latency benchmark
+        ├── test_mount_height   Calibration: mounting height validation
         └── camera_config.json  Copied from src/ at build time
 ```
 
@@ -127,7 +125,7 @@ make
 ```
 
 This builds `ferret_tracker` and the calibration tools (`test_param_sweep`,
-`test_resolution_sweep`, `test_latency`, `test_mount_height`). Disable the suite with
+`test_latency`, `test_mount_height`). Disable the suite with
 `-DBUILD_CALIBRATION_TESTS=OFF` if you only need the production binary.
 
 If pylon is installed elsewhere:
@@ -284,18 +282,17 @@ lab Linux box.
 Full run protocols, CSV column definitions, and Basler image-quality guidance:
 [`tests/README.md`](tests/README.md).
 
-### Why three suites
+### Calibration tools
 
-| Suite | Binary | Question it answers |
-|-------|--------|---------------------|
-| 1 — Parameter sweep | `test_param_sweep` | Which exposure / gain / fps gives the best image for tracking? |
-| 2 — Resolution / AOI | `test_resolution_sweep` | Which crop size balances arena FOV (mm), fps, and image quality? |
-| 3 — Latency benchmark | `test_latency` | How fast does grab → distance-between-objects run at fixed capture rate? |
-| 4 — Mount height | `test_mount_height` | At this height, do objects still resolve (≥200 px²) and measure accurately? |
+| Tool | Question it answers |
+|------|---------------------|
+| `test_param_sweep` | Best exposure / gain / fps **or** AOI crop (two JSON spec formats) |
+| `test_latency` | How fast does grab → distance-between-objects run at fixed capture rate? |
+| `test_mount_height` | At this height, do objects still resolve (≥200 px²) and measure accurately? |
 
-Recommended order: **suite 1** (lock exposure/gain) → **suite 2** (pick AOI) →
-**suite 4** at candidate mount heights → **suite 3** at each height to confirm
-latency and distance accuracy.
+Recommended order: **param sweep** (exposure/gain, then resolution preset) →
+**mount height** at candidate heights → **latency** at each height to confirm
+distance accuracy.
 
 ### Build calibration tools
 
@@ -303,47 +300,40 @@ Built by default with `make` (see [Build](#build)). Binaries:
 
 ```text
 build/bin/test_param_sweep
-build/bin/test_resolution_sweep
 build/bin/test_latency
 build/bin/test_mount_height
 ```
 
 Outputs land in `tests/output/<suite>/<timestamp>_<label>/` (gitignored).
 
-### Suite 1 — Parameter sweep
+### `test_param_sweep` — parameter and resolution sweeps
 
-Holds every setting at the `camera_config.json` baseline and steps **one**
-parameter through values from a sweep spec JSON:
+One binary, two JSON spec formats (auto-detected):
+
+**Single-parameter** — holds every other setting at the `camera_config.json`
+baseline and steps one field (exposure, gain, fps, …):
 
 ```bash
 cd build
 ./bin/test_param_sweep --sweep ../tests/sweep_configs/exposure_sweep.json
 ```
 
-Example specs in [`tests/sweep_configs/`](tests/sweep_configs/) (`exposure_sweep.json`,
-`gain_sweep.json`, `frame_rate_sweep.json`). Per run:
+Specs: `exposure_sweep.json`, `gain_sweep.json`, `frame_rate_sweep.json`.
+Outputs: `sweep.csv` + sample PNGs. Pick mean gray ~128–180, low clipping,
+high Laplacian variance.
 
-- `sweep.csv` — achieved fps, mean gray, stddev, clipped-pixel %, Laplacian variance
-- Sample PNGs — `<timestamp>_<parameter>_<value>_fNNN.png`
-
-Pick values where mean gray is ~128–180, clipping is near zero, and Laplacian
-variance is high without excessive gain noise.
-
-### Suite 2 — Resolution / AOI sweep
-
-Sweeps **width × height** presets (optional offsets) and reports field of view
-in mm at the configured GSD, plus achieved fps and image metrics:
+**Resolution / AOI presets** — steps width×height+offset combinations:
 
 ```bash
-./bin/test_resolution_sweep --sweep ../tests/sweep_configs/resolution_sweep.json
+./bin/test_param_sweep --sweep ../tests/sweep_configs/resolution_sweep.json
+./bin/test_param_sweep --sweep ../tests/sweep_configs/resolution_sweep.json --gsd 1.29
 ```
 
-Example spec: [`tests/sweep_configs/resolution_sweep.json`](tests/sweep_configs/resolution_sweep.json).
-Per run: `resolution.csv` + labeled PNGs. Override GSD with `--gsd 1.29` if
-mount height differs from 1.2 m. Pick a preset that covers the full arena
-while meeting the fps target; confirm blob size with suite 4.
+Spec: [`resolution_sweep.json`](tests/sweep_configs/resolution_sweep.json).
+Outputs: `resolution.csv` (FOV in mm, fps, image metrics) + PNGs. Use `--gsd`
+if mount height differs from 1.2 m.
 
-### Suite 3 — Two-object latency benchmark
+### `test_latency` — two-object latency benchmark
 
 Runs the **same pipeline** as production (`FerretTracker`: MOG2 + Kalman) and
 records per-frame kinematics plus grab-to-distance latency:
@@ -362,7 +352,7 @@ Per run:
 
 Shared flags: `--camera-config`, `--output`, `--gsd`, `--verbose`.
 
-### Suite 4 — Mounting height validation
+### `test_mount_height` — mounting height validation
 
 Operator-in-the-loop: mount the camera at a candidate height, then:
 
@@ -399,8 +389,7 @@ metric interpretation.
 | Target | Command | Description |
 |--------|---------|-------------|
 | `ferret_tracker` | `make ferret_tracker` | Production tracker executable |
-| `test_param_sweep` | `make test_param_sweep` | Calibration: parameter sweep |
-| `test_resolution_sweep` | `make test_resolution_sweep` | Calibration: AOI / resolution sweep |
+| `test_param_sweep` | `make test_param_sweep` | Calibration: parameter + resolution sweeps |
 | `test_latency` | `make test_latency` | Calibration: latency benchmark |
 | `test_mount_height` | `make test_mount_height` | Calibration: mount height validation |
 | `run_rt` | `make run_rt` | Run with SCHED_FIFO priority |

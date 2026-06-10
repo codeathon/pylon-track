@@ -7,7 +7,7 @@
 #include "camera_settings.h"
 #include "image_metrics.h"
 
-// Shared capture helpers for param_sweep and resolution_sweep.
+// Shared capture helpers for test_param_sweep (parameter + resolution modes).
 
 struct CaptureOptions {
 	int frames = 50;
