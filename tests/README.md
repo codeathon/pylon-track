@@ -35,6 +35,33 @@ clipping, and fps vs target.
 
 After a pass, copy the `applied_settings` block into `src/camera_config.json`.
 
+Settings file: [`one_time_settings.json`](one_time_settings.json) — edit the
+`camera` block and `verification` thresholds before running.
+
+---
+
+## `camera_config.json` fields (production + sweeps)
+
+[`src/camera_config.json`](../src/camera_config.json) is the baseline for all
+sweeps. Newer fields are optional in older copies (defaults apply).
+
+| Field | Default | Notes |
+|-------|---------|-------|
+| `exposure_time_us` | `2000` | µs |
+| `exposure_time_mode` | `Standard` | `Standard` or `UltraShort`; alias `Common` → `Standard` |
+| `gain_db` | `6.0` | dB, 0–24 user-facing |
+| `width` / `height` | `1920` / `960` | AOI |
+| `offset_x` / `offset_y` | `0` / `120` | AOI position |
+| `frame_rate_enable` | `true` | `false` = max unconstrained fps |
+| `frame_rate_fps` | `200.0` | Target when enable is true |
+| `black_level` | `0` | ≤ 64 recommended |
+| `gamma` | `1.0` | Keep at 1.0 for tracking |
+| `binning_horizontal` / `binning_vertical` | `1` | Mutually exclusive with scaling |
+| `binning_selector` | `Sensor` | `Sensor` or `FPGA` (Pylon enum `Region1`) |
+| `scaling_horizontal` | `1.0` | &lt; 1.0 in-camera downscale |
+| `reverse_x` / `reverse_y` | `false` | Mount orientation |
+| `device_link_throughput_limit` | `Off` | `On` + `device_link_throughput_mbps` |
+
 ---
 
 ## `test_param_sweep` — parameter and preset sweeps
@@ -53,8 +80,8 @@ One binary auto-detects the spec format:
 | File | What it sweeps |
 |------|----------------|
 | `exposure_sweep.json` | Exposure (250–4000 µs) |
-| `exposure_extended_sweep.json` | Exposure 19 µs–5000 µs (common mode) |
-| `ultra_short_exposure_sweep.json` | Common + UltraShort exposure presets |
+| `exposure_extended_sweep.json` | Exposure 19 µs–5000 µs (Standard mode) |
+| `ultra_short_exposure_sweep.json` | Standard + UltraShort exposure presets |
 | `gain_sweep.json` | Gain 0–24 dB |
 | `frame_rate_sweep.json` | Target fps cap |
 | `frame_rate_enable_sweep.json` | Capped vs free-run max fps |
@@ -63,7 +90,7 @@ One binary auto-detects the spec format:
 | `black_level_sweep.json` | Black level 0–64 |
 | `gamma_sweep.json` | Gamma 0.5–2.0 |
 | `scaling_sweep.json` | In-camera scaling (requires binning off) |
-| `binning_sweep.json` | Sensor vs FPGA binning 1×1–4×4 |
+| `binning_sweep.json` | Sensor vs FPGA (`Region1`) binning 1×1–4×4 |
 | `throughput_sweep.json` | USB throughput limit on/off |
 
 ### Single-parameter mode
@@ -124,7 +151,7 @@ Spec format (`resolution_sweep.json`):
 	"save_images": 2,
 	"presets": [
 		{
-			"label": "production_1920x960",
+			"label": "production_1920x960_y120",
 			"width": 1920,
 			"height": 960,
 			"offset_x": 0,
@@ -165,12 +192,19 @@ How to pick a winner:
 			"binning_selector": "Sensor",
 			"binning_horizontal": 2,
 			"binning_vertical": 2
+		},
+		{
+			"label": "fpga_2x2",
+			"binning_selector": "FPGA",
+			"binning_horizontal": 2,
+			"binning_vertical": 2
 		}
 	]
 }
 ```
 
-2×2 binning doubles effective pixel size — rescale GSD and re-run
+`binning_selector: "FPGA"` maps to Pylon `Region1` on ace 2 USB. 2×2 binning
+doubles effective pixel size — rescale GSD and re-run
 `test_mount_height` before trusting mm measurements.
 
 ### Compound camera preset mode
@@ -186,6 +220,11 @@ throughput cap + Mbps):
 {
 	"preset_type": "camera",
 	"presets": [
+		{
+			"label": "standard_500us",
+			"exposure_time_mode": "Standard",
+			"exposure_time_us": 500
+		},
 		{
 			"label": "ultra_5us",
 			"exposure_time_mode": "UltraShort",

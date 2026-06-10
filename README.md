@@ -52,7 +52,8 @@ pylon-track/
 ├── tests/                    Camera calibration suite (hardware-in-the-loop)
 │   ├── README.md             Full run protocols + Basler calibration notes
 │   ├── common/               Shared: session dirs, CSV writer, image metrics
-│   ├── sweep_configs/        Example parameter sweep specs (JSON)
+│   ├── sweep_configs/        Parameter + preset sweep specs (14 JSON files)
+│   ├── one_time_settings.json  Fixed rig values for test_one_time_setup
 │   ├── one_time_suite.cpp      One-time rig setup → test_one_time_setup
 │   ├── param_sweep.cpp       Config + preset sweeps → test_param_sweep
 │   ├── latency_suite.cpp     Latency benchmark → test_latency
@@ -160,12 +161,22 @@ Edit [`src/camera_config.json`](src/camera_config.json) to tune brightness and i
 | Field | Default | Unit / notes |
 |-------|---------|----------------|
 | `exposure_time_us` | `2000` | Microseconds (raise to brighten, e.g. `8000`) |
+| `exposure_time_mode` | `Standard` | `Standard` (19 µs–10 s) or `UltraShort` (1–14 µs); JSON alias `Common` → `Standard` |
 | `gain_db` | `6.0` | dB (raise if still dark; adds noise) |
 | `exposure_auto` | `false` | `true` enables auto exposure |
 | `gain_auto` | `false` | `true` enables auto gain |
 | `width` / `height` | `1920` / `960` | AOI size |
 | `offset_x` / `offset_y` | `0` / `120` | AOI position |
-| `frame_rate_fps` | `200.0` | Target FPS |
+| `frame_rate_enable` | `true` | `false` = unconstrained max fps |
+| `frame_rate_fps` | `200.0` | Target FPS (when enable is true) |
+| `black_level` | `0` | Keep ≤ 64 (Basler); see `black_level_sweep.json` |
+| `gamma` | `1.0` | Leave at 1.0 for CV / tracking |
+| `binning_horizontal` / `binning_vertical` | `1` / `1` | 2×2 sensor binning doubles effective pixel size |
+| `binning_selector` | `Sensor` | `Sensor` or `FPGA` (Pylon: `Region1`) |
+| `scaling_horizontal` | `1.0` | &lt; 1.0 downscales in-camera; mutually exclusive with binning |
+| `reverse_x` / `reverse_y` | `false` | Flip image to match mount orientation |
+| `trigger_mode` | `Off` | Free-run acquisition |
+| `device_link_throughput_limit` | `Off` | `On` + `device_link_throughput_mbps` caps USB bandwidth |
 
 Override config path (first match wins):
 
@@ -357,10 +368,26 @@ cd build
 ./bin/test_param_sweep --sweep ../tests/sweep_configs/exposure_sweep.json
 ```
 
-Specs include `exposure_sweep.json`, `gain_sweep.json`, `black_level_sweep.json`,
-`resolution_sweep.json` (16 AOI combos), `binning_sweep.json`, etc.
-Outputs: `sweep.csv` + sample PNGs. Pick mean gray ~128–180, low clipping,
-high Laplacian variance.
+All specs in [`tests/sweep_configs/`](tests/sweep_configs/):
+
+| File | Sweeps |
+|------|--------|
+| `exposure_sweep.json` | Exposure 250–4000 µs |
+| `exposure_extended_sweep.json` | Exposure 19 µs–5000 µs (Standard mode) |
+| `ultra_short_exposure_sweep.json` | Standard + UltraShort exposure presets |
+| `gain_sweep.json` | Gain 0–24 dB |
+| `frame_rate_sweep.json` | Target fps cap |
+| `frame_rate_enable_sweep.json` | Capped vs free-run max fps |
+| `resolution_sweep.json` | 16 AOI width×height×offset combos |
+| `offset_x_sweep.json` / `offset_y_sweep.json` | AOI centering |
+| `black_level_sweep.json` | Black level 0–64 |
+| `gamma_sweep.json` | Gamma 0.5–2.0 |
+| `scaling_sweep.json` | In-camera scaling (binning must be off) |
+| `binning_sweep.json` | Sensor vs FPGA (`Region1`) binning 1×1–4×4 |
+| `throughput_sweep.json` | USB throughput limit on/off |
+
+Single-parameter runs write `sweep.csv` + sample PNGs. Pick mean gray
+~128–180, low clipping, high Laplacian variance.
 
 **Resolution / AOI presets** — steps width×height+offset combinations:
 
@@ -372,6 +399,19 @@ high Laplacian variance.
 Spec: [`resolution_sweep.json`](tests/sweep_configs/resolution_sweep.json).
 Outputs: `resolution.csv` (FOV in mm, fps, image metrics) + PNGs. Use `--gsd`
 if mount height differs from 1.2 m.
+
+**Binning presets** (`preset_type: binning`) → `binning.csv`:
+
+```bash
+./bin/test_param_sweep --sweep ../tests/sweep_configs/binning_sweep.json
+```
+
+**Compound presets** (`preset_type: camera`) — exposure mode + time, throughput,
+etc. → `camera_preset.csv`:
+
+```bash
+./bin/test_param_sweep --sweep ../tests/sweep_configs/ultra_short_exposure_sweep.json
+```
 
 ### `test_latency` — two-object latency benchmark
 
