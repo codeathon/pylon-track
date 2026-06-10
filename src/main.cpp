@@ -6,9 +6,11 @@
 #include <csignal>
 #include <atomic>
 #include <cstring>
+#include <exception>
 #include <string>
 
 #include "camera_config.h"
+#include "camera_settings.h"
 #include "ferret_tracker.h"
 #include "display.h"
 #include "logger.h"
@@ -23,6 +25,7 @@ struct AppOptions {
 	bool enable_display = false;
 	bool verbose = false;
 	std::string log_file;
+	std::string camera_config;
 };
 
 static bool parse_args(int argc, char** argv, AppOptions& opts) {
@@ -37,6 +40,12 @@ static bool parse_args(int argc, char** argv, AppOptions& opts) {
 				return false;
 			}
 			opts.log_file = argv[++i];
+		} else if (std::strcmp(argv[i], "--camera-config") == 0) {
+			if (i + 1 >= argc) {
+				std::cerr << "ERROR: --camera-config requires a path argument\n";
+				return false;
+			}
+			opts.camera_config = argv[++i];
 		} else {
 			std::cerr << "ERROR: Unknown argument: " << argv[i] << '\n';
 			return false;
@@ -85,7 +94,22 @@ int main(int argc, char** argv) {
 				"Live display enabled (helper thread). Press q or ESC in window to quit.");
 		}
 
-		configure_camera(camera);
+		const std::string config_path =
+			resolve_camera_config_path(argv[0], opts.camera_config);
+		log_info("camera", "Loading camera config: " + config_path);
+
+		CameraSettings camera_settings;
+		if (!load_camera_config(config_path, camera_settings)) {
+			PylonTerminate();
+			return 1;
+		}
+		try {
+			configure_camera(camera, camera_settings);
+		} catch (const std::exception& e) {
+			log_error("camera", std::string("Camera configuration failed: ") + e.what());
+			PylonTerminate();
+			return 1;
+		}
 
 		FerretTracker tracker(opts.enable_display);
 		camera.RegisterImageEventHandler(&tracker,

@@ -1,0 +1,15 @@
+{
+    "pixel_format": "Mono8",
+    "width": 1920,
+    "height": 960,
+    "offset_x": 0,
+    "offset_y": 120,
+    "exposure_auto": false,
+    "exposure_time_us": 2000.0,
+    "gain_auto": false,
+    "gain_db": 6.0,
+    "frame_rate_enable": true,
+    "frame_rate_fps": 200.0,
+    "trigger_mode": "Off",
+    "device_link_throughput_limit": "Off"
+}

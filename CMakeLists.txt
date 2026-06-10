@@ -3,6 +3,17 @@ project(ferret_tracker)
 
 set(CMAKE_CXX_STANDARD 17)
 
+# ── nlohmann/json (camera_config.json) ────────────────────────────────────────
+find_package(nlohmann_json 3.11.2 QUIET)
+if(NOT nlohmann_json_FOUND)
+	include(FetchContent)
+	FetchContent_Declare(
+		nlohmann_json
+		URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+	)
+	FetchContent_MakeAvailable(nlohmann_json)
+endif()
+
 if(NOT CMAKE_BUILD_TYPE)
 	set(CMAKE_BUILD_TYPE Release)
 endif()
@@ -123,8 +134,20 @@ if(UNIX)
 	target_link_libraries(ferret_tracker
 		${PYLON_LINK_FLAGS}
 		${OpenCV_LIBS}
+		nlohmann_json::nlohmann_json
 		pthread
 	)
+
+	# Copy camera config beside the executable for default runtime lookup.
+	configure_file(
+		${CMAKE_SOURCE_DIR}/src/camera_config.json
+		${CMAKE_BINARY_DIR}/bin/camera_config.json
+		COPYONLY
+	)
+	add_custom_target(copy_camera_config ALL
+		DEPENDS ${CMAKE_BINARY_DIR}/bin/camera_config.json
+	)
+	add_dependencies(ferret_tracker copy_camera_config)
 
 	# RPATH: embed pylon lib path so the binary runs without LD_LIBRARY_PATH
 	set_target_properties(ferret_tracker PROPERTIES

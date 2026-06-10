@@ -7,7 +7,7 @@ Real-time dual-animal tracking from a Basler USB3 camera using the [Basler pylon
 ## What it does
 
 1. Opens the first available Basler camera (`CBaslerUniversalInstantCamera`).
-2. Configures mono8 capture, AOI, exposure, gain, and ~200 fps frame rate (`src/camera_config.cpp`).
+2. Configures mono8 capture, AOI, exposure, gain, and frame rate from [`src/camera_config.json`](src/camera_config.json).
 3. On each frame (`src/ferret_tracker.cpp`):
    - MOG2 background subtraction (30 s warmup — keep arena empty)
    - Morphological cleanup + contour detection
@@ -29,20 +29,23 @@ pylon-track/
 ├── CMakeLists.txt
 ├── include/                  Public headers
 │   ├── camera_config.h
+│   ├── camera_settings.h
 │   ├── display.h
 │   ├── ferret_tracker.h
 │   ├── logger.h                Global thread-safe logger
 │   └── tracker.h
 ├── src/                      Implementation
 │   ├── main.cpp              Entry point, signal handling, stdout loop
-│   ├── camera_config.cpp     Basler GenICam settings (AOI, exposure, FPS)
+│   ├── camera_config.cpp     Load JSON + apply GenICam settings
+│   ├── camera_config.json    Camera exposure, gain, AOI, frame rate (edit this)
 │   ├── ferret_tracker.cpp    Pylon image handler: BG subtract + track logic
 │   ├── tracker.cpp           Shared Kalman filter helper
 │   ├── display.cpp           Live overlay window (helper thread)
 │   └── logger.cpp
 └── build/                    Out-of-source build (created by you)
     └── bin/
-        └── ferret_tracker    Executable output
+        ├── ferret_tracker      Executable output
+        └── camera_config.json  Copied from src/ at build time
 ```
 
 Source files still use the `ferret_tracker` name internally; the repo name reflects the **pylon** camera stack.
@@ -71,8 +74,10 @@ All four are required before `cmake` will succeed:
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential cmake libopencv-dev
+sudo apt install -y build-essential cmake libopencv-dev nlohmann-json3-dev
 ```
+
+`nlohmann-json3-dev` is optional but avoids CMake downloading json during configure.
 
 ### Basler pylon SDK
 
@@ -124,6 +129,29 @@ cmake -DOpenCV_DIR=/usr/lib/x86_64-linux-gnu/cmake/opencv4 -DPYLON_ROOT=/opt/pyl
 ```
 
 Headless mode (default): status messages use the global logger; tracking telemetry prints as **raw** lines (no timestamp prefix) for easy piping.
+
+### Camera configuration (`src/camera_config.json`)
+
+Edit [`src/camera_config.json`](src/camera_config.json) to tune brightness and imaging (no rebuild required — restart the app):
+
+| Field | Default | Unit / notes |
+|-------|---------|----------------|
+| `exposure_time_us` | `2000` | Microseconds (raise to brighten, e.g. `8000`) |
+| `gain_db` | `6.0` | dB (raise if still dark; adds noise) |
+| `exposure_auto` | `false` | `true` enables auto exposure |
+| `gain_auto` | `false` | `true` enables auto gain |
+| `width` / `height` | `1920` / `960` | AOI size |
+| `offset_x` / `offset_y` | `0` / `120` | AOI position |
+| `frame_rate_fps` | `200.0` | Target FPS |
+
+Override config path (first match wins):
+
+```bash
+./build/bin/ferret_tracker --camera-config /path/to/camera_config.json
+export PYLON_CAMERA_CONFIG=src/camera_config.json
+```
+
+Default lookup: `camera_config.json` next to the executable (`build/bin/`), then `src/camera_config.json` from repo root.
 
 ### Logging
 
@@ -186,13 +214,14 @@ sudo setcap cap_sys_nice+ep build/bin/ferret_tracker
 
 ## Camera and optics assumptions
 
-Tuned in `src/camera_config.cpp` and `include/ferret_tracker.h`:
+Camera GenICam settings: [`src/camera_config.json`](src/camera_config.json). Tracker constants in `include/ferret_tracker.h`:
 
 | Constant | Value | Meaning |
 |----------|-------|---------|
 | Resolution | 1920×960 (AOI) | Center crop for ~200 fps |
 | Frame rate | 200 fps | `AcquisitionFrameRate` |
-| Exposure | 2000 µs | Limits motion blur |
+| Exposure | `exposure_time_us` in JSON (default 2000 µs) | Raise to brighten; more motion blur |
+| Gain | `gain_db` in JSON (default 6 dB) | Raise if still dark; adds noise |
 | `GSD_MM_PX` | 1.035 mm/px | Ground sample distance at 1.2 m mount |
 | `WARMUP_FRAMES` | 6000 (~30 s) | Background learning period |
 
