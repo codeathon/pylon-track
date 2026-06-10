@@ -29,8 +29,10 @@ public:
 	TrackState ferret;
 	TrackState prey;
 
-	// Pass loaded intrinsics to undistort each frame before background subtraction.
+	// warmup_frames/gsd_mm_px overridable for calibration tests; calib.npz enables undistort.
 	explicit FerretTracker(bool enable_display = false,
+		int warmup_frames = WARMUP_FRAMES,
+		float gsd_mm_px = GSD_MM_PX,
 		std::optional<CameraCalib> calib = std::nullopt);
 
 	void OnImageGrabbed(Pylon::CInstantCamera& camera,
@@ -39,8 +41,14 @@ public:
 	// Copies the latest snapshot for overlay rendering (display thread only).
 	bool get_display_snapshot(DisplaySnapshot& out);
 
+protected:
+	// Frame counter exposed to test subclasses (latency suite tags CSV rows).
+	uint64_t frame_count_ = 0;
+
 private:
 	bool enable_display_ = false;
+	int warmup_frames_ = WARMUP_FRAMES;
+	float gsd_mm_px_ = GSD_MM_PX;
 	bool use_undistort_ = false;
 	cv::Mat undist_map1_;
 	cv::Mat undist_map2_;
@@ -49,7 +57,6 @@ private:
 	cv::KalmanFilter kf_ferret_;
 	cv::KalmanFilter kf_prey_;
 	cv::Mat morph_kernel_;
-	uint64_t frame_count_ = 0;
 
 	std::mutex display_mutex_;
 	DisplaySnapshot display_snapshot_;

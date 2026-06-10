@@ -6,6 +6,8 @@ calib.npz
 undistort_preview.png
 charuco_board.png
 __pycache__/
+# Calibration suite captures (images + CSVs, can be large)
+tests/output/
 *.o
 *.a
 *.so
