@@ -16,6 +16,7 @@ set(CALIB_COMMON_SOURCES
 	common/test_session.cpp
 	common/image_metrics.cpp
 	common/measurement_run.cpp
+	common/camera_sweep.cpp
 )
 
 # Shared static lib so the production .cpp files compile once, not 3x.
@@ -38,9 +39,11 @@ target_link_libraries(calib_common PUBLIC
 )
 
 # One executable per suite -> build/bin/.
-foreach(suite param_sweep latency_suite mount_height_suite)
+foreach(suite param_sweep resolution_sweep latency_suite mount_height_suite)
 	if(suite STREQUAL "param_sweep")
 		set(exe_name test_param_sweep)
+	elseif(suite STREQUAL "resolution_sweep")
+		set(exe_name test_resolution_sweep)
 	elseif(suite STREQUAL "latency_suite")
 		set(exe_name test_latency)
 	else()

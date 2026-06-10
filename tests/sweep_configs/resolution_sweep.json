@@ -1,0 +1,35 @@
+{
+	"gsd_mm_px": 1.035,
+	"frames_per_preset": 50,
+	"save_images": 2,
+	"presets": [
+		{
+			"label": "production_1920x960",
+			"width": 1920,
+			"height": 960,
+			"offset_x": 0,
+			"offset_y": 120
+		},
+		{
+			"label": "full_width_1920x1200",
+			"width": 1920,
+			"height": 1200,
+			"offset_x": 0,
+			"offset_y": 0
+		},
+		{
+			"label": "center_crop_1280x640",
+			"width": 1280,
+			"height": 640,
+			"offset_x": 320,
+			"offset_y": 280
+		},
+		{
+			"label": "tight_crop_960x480",
+			"width": 960,
+			"height": 480,
+			"offset_x": 480,
+			"offset_y": 360
+		}
+	]
+}

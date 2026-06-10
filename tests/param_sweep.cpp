@@ -12,8 +12,6 @@
 #include <pylon/PylonIncludes.h>
 #include <pylon/BaslerUniversalInstantCamera.h>
 
-#include <chrono>
-#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -21,15 +19,13 @@
 #include <thread>
 
 #include <nlohmann/json.hpp>
-#include <opencv2/opencv.hpp>
 
 #include "camera_config.h"
 #include "camera_settings.h"
+#include "camera_sweep.h"
 #include "logger.h"
-#include "image_metrics.h"
 #include "test_session.h"
 
-namespace fs = std::filesystem;
 using nlohmann::json;
 
 namespace {
@@ -61,90 +57,19 @@ bool load_sweep_spec(const std::string& path, SweepSpec& out) {
 	return true;
 }
 
-// Maps a sweep spec key onto the CameraSettings field. Mirrors the fields in
-// camera_settings.h — extend both together when new settings are added.
-bool apply_override(CameraSettings& s, const std::string& key, const json& v) {
-	if (key == "exposure_time_us") { s.exposure_time_us = v.get<double>(); return true; }
-	if (key == "gain_db") { s.gain_db = v.get<double>(); return true; }
-	if (key == "frame_rate_fps") { s.frame_rate_fps = v.get<double>(); return true; }
-	if (key == "width") { s.width = v.get<int>(); return true; }
-	if (key == "height") { s.height = v.get<int>(); return true; }
-	if (key == "offset_x") { s.offset_x = v.get<int>(); return true; }
-	if (key == "offset_y") { s.offset_y = v.get<int>(); return true; }
-	if (key == "exposure_auto") { s.exposure_auto = v.get<bool>(); return true; }
-	if (key == "gain_auto") { s.gain_auto = v.get<bool>(); return true; }
-	if (key == "frame_rate_enable") { s.frame_rate_enable = v.get<bool>(); return true; }
-	if (key == "pixel_format") { s.pixel_format = v.get<std::string>(); return true; }
-	if (key == "trigger_mode") { s.trigger_mode = v.get<std::string>(); return true; }
-	if (key == "device_link_throughput_limit") {
-		s.device_link_throughput_limit = v.get<std::string>(); return true;
-	}
-	return false;
-}
-
-// "2000.5" -> "2000p5" — keeps filenames shell- and Windows-safe.
 std::string value_label(const json& v) {
 	std::string s = v.is_string() ? v.get<std::string>() : v.dump();
 	for (char& c : s) {
-		if (c == '.') c = 'p';
+		if (c == '.') {
+			c = 'p';
+		}
 	}
 	return s;
 }
 
-struct ValueResult {
-	ImageMetrics metrics;
-	double achieved_fps = 0.0;
-	int frames = 0;
-};
-
-// Grabs spec.frames_per_value frames at the current settings, computing
-// metrics on each and saving the first spec.save_images as labeled PNGs.
-ValueResult capture_for_value(Pylon::CBaslerUniversalInstantCamera& camera,
-	const SweepSpec& spec, const json& value, const std::string& session_dir)
+void write_result_row(CsvWriter& csv, const std::string& parameter,
+	const json& value, const CaptureResult& r)
 {
-	using SteadyClock = std::chrono::steady_clock;
-	std::vector<ImageMetrics> per_frame;
-	ValueResult result;
-
-	camera.StartGrabbing(spec.frames_per_value, Pylon::GrabStrategy_OneByOne);
-	SteadyClock::time_point first_ts{}, last_ts{};
-
-	Pylon::CGrabResultPtr grab;
-	while (camera.IsGrabbing()) {
-		camera.RetrieveResult(5000, grab, Pylon::TimeoutHandling_ThrowException);
-		if (!grab->GrabSucceeded()) {
-			continue;
-		}
-		const auto now = SteadyClock::now();
-		if (result.frames == 0) {
-			first_ts = now;
-		}
-		last_ts = now;
-
-		const cv::Mat frame(grab->GetHeight(), grab->GetWidth(),
-			CV_8UC1, grab->GetBuffer());
-		per_frame.push_back(compute_image_metrics(frame));
-
-		if (result.frames < spec.save_images) {
-			char name[160];
-			std::snprintf(name, sizeof(name), "%s_%s_%s_f%03d.png",
-				timestamp_label().c_str(), spec.parameter.c_str(),
-				value_label(value).c_str(), result.frames);
-			cv::imwrite((fs::path(session_dir) / name).string(), frame);
-		}
-		++result.frames;
-	}
-	camera.StopGrabbing();
-
-	result.metrics = average_metrics(per_frame);
-	if (result.frames > 1) {
-		const double span_s = std::chrono::duration<double>(last_ts - first_ts).count();
-		result.achieved_fps = span_s > 0.0 ? (result.frames - 1) / span_s : 0.0;
-	}
-	return result;
-}
-
-void write_result_row(CsvWriter& csv, const json& value, const ValueResult& r) {
 	csv.write_row({
 		value.is_string() ? value.get<std::string>() : value.dump(),
 		std::to_string(r.frames),
@@ -202,14 +127,16 @@ int main(int argc, char** argv) {
 
 		const std::string session_dir =
 			make_session_dir(output_base, "param_sweep", spec.parameter);
-		CsvWriter csv((fs::path(session_dir) / "sweep.csv").string(), {
+		CsvWriter csv((std::filesystem::path(session_dir) / "sweep.csv").string(), {
 			spec.parameter, "frames", "achieved_fps", "mean_gray", "stddev",
 			"clipped_low_pct", "clipped_high_pct", "laplacian_var",
 		});
 
+		const CaptureOptions capture_opts{spec.frames_per_value, spec.save_images};
+
 		for (const json& value : spec.values) {
 			CameraSettings settings = base;
-			if (!apply_override(settings, spec.parameter, value)) {
+			if (!apply_camera_override(settings, spec.parameter, value)) {
 				log_error("sweep", "Unknown parameter: " + spec.parameter);
 				exit_code = 1;
 				break;
@@ -218,14 +145,13 @@ int main(int argc, char** argv) {
 			try {
 				configure_camera(camera, settings);
 			} catch (const std::exception& e) {
-				// Skip unsupported values (e.g. enum strings the camera
-				// rejects) so the rest of the sweep still completes.
 				log_warn("sweep", std::string("Skipping value: ") + e.what());
 				continue;
 			}
-			// Let auto-functions / sensor settle before measuring.
 			std::this_thread::sleep_for(std::chrono::milliseconds(500));
-			write_result_row(csv, value, capture_for_value(camera, spec, value, session_dir));
+			const std::string prefix = spec.parameter + "_" + value_label(value);
+			write_result_row(csv, spec.parameter, value,
+				capture_frames(camera, capture_opts, session_dir, prefix));
 		}
 		log_info("sweep", "Done -> " + session_dir);
 	} catch (const Pylon::GenericException& e) {

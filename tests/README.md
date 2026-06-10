@@ -11,6 +11,7 @@ All outputs go to `tests/output/<suite>/<timestamp>_<label>/` (gitignored).
 | Tool | Purpose |
 |------|---------|
 | `test_param_sweep` | Sweep one config parameter, capture labeled images + quality metrics |
+| `test_resolution_sweep` | Sweep AOI width×height presets; compare FOV (mm), fps, and image quality |
 | `test_latency` | Two-object tracking benchmark: speeds, centroids, distance, latency |
 | `test_mount_height` | Per-height resolution check: annotated stills + the latency benchmark |
 
@@ -51,7 +52,53 @@ How to pick a winner (see Basler notes below):
 - `achieved_fps` confirms the value doesn't choke the frame rate
   (exposure must fit the frame period: 5000 µs at 200 fps).
 
-## Suite 2 — Two-object latency benchmark (`test_latency`)
+## Suite 2 — Resolution / AOI sweep (`test_resolution_sweep`)
+
+Steps through **width × height** (and optional `offset_x` / `offset_y`) presets.
+Cropping changes **field of view in mm** and achievable **fps**, not mm/px per
+pixel (GSD is set by lens + mount height). Use this to pick an AOI that covers
+enough arena while sustaining the target frame rate.
+
+```bash
+./bin/test_resolution_sweep --sweep ../tests/sweep_configs/resolution_sweep.json
+```
+
+Spec format (`tests/sweep_configs/resolution_sweep.json`):
+
+```json
+{
+	"gsd_mm_px": 1.035,
+	"frames_per_preset": 50,
+	"save_images": 2,
+	"presets": [
+		{
+			"label": "production_1920x960",
+			"width": 1920,
+			"height": 960,
+			"offset_x": 0,
+			"offset_y": 120
+		}
+	]
+}
+```
+
+Override GSD from the CLI if your mount height differs from 1.2 m:
+`--gsd 1.29` (e.g. 1.5 m mount).
+
+Outputs per run:
+
+- `resolution.csv` — per preset: label, width, height, offsets, total_px,
+  `fov_width_mm`, `fov_height_mm`, megapixels, achieved fps, image metrics.
+- Sample PNGs — `<timestamp>_resolution_<label>_fNNN.png`.
+
+How to pick a winner:
+
+- `fov_width_mm` × `fov_height_mm` must cover the full arena footprint.
+- `achieved_fps` should meet or exceed your tracking target (e.g. 200).
+- Compare sample images at the same lighting — tighter crops trade coverage
+  for fps; use `test_mount_height` afterward to confirm blobs stay ≥200 px².
+
+## Suite 3 — Two-object latency benchmark (`test_latency`)
 
 Runs the **production pipeline** (MOG2 background subtraction + Kalman,
 `FerretTracker`) and times grab → distance-between-objects per frame.
@@ -78,7 +125,7 @@ Latency here is host-side processing latency (grab callback → distance
 computed). USB transfer/exposure time is not included; add ~1 frame period
 for sensor-to-decision budgeting.
 
-## Suite 3 — Mounting height validation (`test_mount_height`)
+## Suite 4 — Mounting height validation (`test_mount_height`)
 
 Height can't be swept automatically — mount the camera at a candidate height,
 run once per height:
