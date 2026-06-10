@@ -1,0 +1,6 @@
+{
+	"parameter": "frame_rate_fps",
+	"values": [50.0, 100.0, 150.0, 200.0, 250.0],
+	"frames_per_value": 100,
+	"save_images": 2
+}

@@ -183,6 +183,14 @@ if(UNIX)
 		"  make run_rt           — run with SCHED_FIFO priority (low jitter)\n"
 		"  make install_udev     — install udev rules for USB camera access")
 
+	# ── Calibration test suite (tests/) ───────────────────────────────────
+	# Camera-attached tools: parameter sweep, latency benchmark, mount
+	# height validation. Reuses the PYLON_*/OpenCV variables set above.
+	option(BUILD_CALIBRATION_TESTS "Build calibration test suite" ON)
+	if(BUILD_CALIBRATION_TESTS)
+		add_subdirectory(tests)
+	endif()
+
 else()
 	message(FATAL_ERROR "Unsupported platform — Linux only")
 endif()

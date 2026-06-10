@@ -27,7 +27,12 @@ public:
 	TrackState ferret;
 	TrackState prey;
 
-	explicit FerretTracker(bool enable_display = false);
+	// warmup_frames/gsd_mm_px are overridable for the calibration test suite:
+	// tests shorten the background warmup and rescale GSD for other mount
+	// heights. Defaults preserve production behavior (30s warmup, 1.2m mount).
+	explicit FerretTracker(bool enable_display = false,
+		int warmup_frames = WARMUP_FRAMES,
+		float gsd_mm_px = GSD_MM_PX);
 
 	void OnImageGrabbed(Pylon::CInstantCamera& camera,
 		const Pylon::CGrabResultPtr& result) override;
@@ -35,13 +40,18 @@ public:
 	// Copies the latest snapshot for overlay rendering (display thread only).
 	bool get_display_snapshot(DisplaySnapshot& out);
 
+protected:
+	// Frame counter exposed to test subclasses (latency suite tags CSV rows).
+	uint64_t frame_count_ = 0;
+
 private:
 	bool enable_display_ = false;
+	int warmup_frames_ = WARMUP_FRAMES;
+	float gsd_mm_px_ = GSD_MM_PX;
 	cv::Ptr<cv::BackgroundSubtractorMOG2> bg_;
 	cv::KalmanFilter kf_ferret_;
 	cv::KalmanFilter kf_prey_;
 	cv::Mat morph_kernel_;
-	uint64_t frame_count_ = 0;
 
 	std::mutex display_mutex_;
 	DisplaySnapshot display_snapshot_;

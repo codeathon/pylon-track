@@ -5,8 +5,10 @@
 #include <algorithm>
 #include <sstream>
 
-FerretTracker::FerretTracker(bool enable_display)
+FerretTracker::FerretTracker(bool enable_display, int warmup_frames, float gsd_mm_px)
 	: enable_display_(enable_display)
+	, warmup_frames_(warmup_frames)
+	, gsd_mm_px_(gsd_mm_px)
 	, bg_(cv::createBackgroundSubtractorMOG2(500, 16, false))
 	, kf_ferret_(make_kalman(FPS))
 	, kf_prey_(make_kalman(FPS))
@@ -35,7 +37,7 @@ void FerretTracker::publish_display_snapshot(const cv::Mat& frame,
 	display_snapshot_.ferret = ferret;
 	display_snapshot_.prey = prey;
 	display_snapshot_.frame_count = frame_count_;
-	display_snapshot_.warmup = frame_count_ < static_cast<uint64_t>(WARMUP_FRAMES);
+	display_snapshot_.warmup = frame_count_ < static_cast<uint64_t>(warmup_frames_);
 	display_ready_ = true;
 }
 
@@ -52,7 +54,7 @@ void FerretTracker::OnImageGrabbed(Pylon::CInstantCamera&,
 
 	// Background subtraction
 	// Faster learning during warmup, slow during experiment to avoid adapting to animals
-	const double lr = (frame_count_ < WARMUP_FRAMES) ? 0.01 : 0.002;
+	const double lr = (frame_count_ < static_cast<uint64_t>(warmup_frames_)) ? 0.01 : 0.002;
 	cv::Mat mask;
 	bg_->apply(frame, mask, lr);
 
@@ -89,9 +91,9 @@ void FerretTracker::OnImageGrabbed(Pylon::CInstantCamera&,
 			update_track(kf_ferret_, contours[0], ferret);
 			cv::Mat pred = kf_prey_.predict();
 			prey.pos_px       = {pred.at<float>(0), pred.at<float>(1)};
-			prey.pos_mm       = prey.pos_px * GSD_MM_PX;
+			prey.pos_mm       = prey.pos_px * gsd_mm_px_;
 			prey.speed_mm_s   = std::sqrt(std::pow(pred.at<float>(2), 2) +
-				std::pow(pred.at<float>(3), 2)) * FPS * GSD_MM_PX;
+				std::pow(pred.at<float>(3), 2)) * FPS * gsd_mm_px_;
 			prey.direction_deg = std::atan2(-pred.at<float>(3), pred.at<float>(2))
 				* 180.0f / M_PI;
 			// prey.valid stays true — coasting on prior velocity
@@ -136,8 +138,8 @@ void FerretTracker::update_track(cv::KalmanFilter& kf,
 	float vy_px = corr.at<float>(3);
 
 	state.pos_px       = {corr.at<float>(0), corr.at<float>(1)};
-	state.pos_mm       = state.pos_px * GSD_MM_PX;
-	state.speed_mm_s   = std::sqrt(vx_px * vx_px + vy_px * vy_px) * FPS * GSD_MM_PX;
+	state.pos_mm       = state.pos_px * gsd_mm_px_;
+	state.speed_mm_s   = std::sqrt(vx_px * vx_px + vy_px * vy_px) * FPS * gsd_mm_px_;
 	state.direction_deg = std::atan2(-vy_px, vx_px) * 180.0f / M_PI; // image Y flipped
 	state.valid        = true;
 }

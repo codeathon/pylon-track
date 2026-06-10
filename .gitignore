@@ -1,6 +1,8 @@
 build/
 bin/
 cmake-build-*/
+# Calibration suite captures (images + CSVs, can be large)
+tests/output/
 *.o
 *.a
 *.so
