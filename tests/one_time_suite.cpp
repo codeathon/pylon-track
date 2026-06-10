@@ -28,6 +28,12 @@ using nlohmann::json;
 
 namespace {
 
+// Pylon returns GenICam::gcstring / String_t — not implicitly convertible on all
+// toolchains; always route through .c_str() before std::string or nlohmann::json.
+std::string pylon_string(const GenICam::gcstring& value) {
+	return std::string(value.c_str());
+}
+
 struct OneTimeSpec {
 	std::string description;
 	std::vector<std::string> manual_steps;
@@ -108,7 +114,7 @@ json camera_settings_to_json(const CameraSettings& s) {
 
 json read_camera_state(Pylon::CBaslerUniversalInstantCamera& camera) {
 	json state;
-	state["pixel_format"] = camera.PixelFormat.GetValue();
+	state["pixel_format"] = pylon_string(camera.PixelFormat.ToString());
 	state["width"] = camera.Width.GetValue();
 	state["height"] = camera.Height.GetValue();
 	state["offset_x"] = camera.OffsetX.GetValue();
@@ -124,7 +130,7 @@ json read_camera_state(Pylon::CBaslerUniversalInstantCamera& camera) {
 	state["gain_db"] = camera.Gain.GetValue();
 	state["frame_rate_enable"] = camera.AcquisitionFrameRateEnable.GetValue();
 	state["frame_rate_fps"] = camera.AcquisitionFrameRate.GetValue();
-	state["trigger_mode"] = camera.TriggerMode.GetValue();
+	state["trigger_mode"] = pylon_string(camera.TriggerMode.ToString());
 	if (camera.ResultingFrameRate.IsReadable()) {
 		state["resulting_fps"] = camera.ResultingFrameRate.GetValue();
 	}
@@ -200,8 +206,9 @@ int main(int argc, char** argv) {
 	try {
 		Pylon::CBaslerUniversalInstantCamera camera(
 			Pylon::CTlFactory::GetInstance().CreateFirstDevice());
-		const std::string model = camera.GetDeviceInfo().GetModelName();
-		log_info("one_time", "Camera: " + std::string(model));
+		const std::string model =
+			pylon_string(camera.GetDeviceInfo().GetModelName());
+		log_info("one_time", "Camera: " + model);
 
 		configure_camera(camera, spec.camera);
 		std::this_thread::sleep_for(std::chrono::milliseconds(500));
