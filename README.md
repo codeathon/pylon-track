@@ -317,7 +317,28 @@ values, quantify tracking latency, and validate camera mounting height. These ar
 lab Linux box.
 
 Full run protocols, CSV column definitions, and Basler image-quality guidance:
-[`tests/README.md`](tests/README.md).
+[`tests/README.md`](tests/README.md) — includes **quick-start commands**, full
+lab workflow, CLI flags, and output paths.
+
+### Quick start on the lab machine
+
+```bash
+git pull origin feature/calibration-tests
+cd build && cmake .. && make
+sudo make install_udev    # once
+
+cd build
+./bin/test_one_time_setup --settings ../tests/one_time_settings.json
+./bin/test_param_sweep --sweep ../tests/sweep_configs/exposure_sweep.json
+./bin/test_param_sweep --sweep ../tests/sweep_configs/gain_sweep.json
+./bin/test_param_sweep --sweep ../tests/sweep_configs/resolution_sweep.json
+./bin/test_mount_height --height-cm 120 --duration 30
+./bin/test_latency --duration 30 --warmup-secs 30
+./bin/ferret_tracker --display
+```
+
+See [`tests/README.md`](tests/README.md) for every sweep command, optional sweeps,
+`--gsd` / `--camera-config` flags, and where CSVs/PNGs are written.
 
 ### Calibration tools
 
