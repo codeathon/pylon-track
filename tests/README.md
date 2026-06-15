@@ -17,6 +17,168 @@ All outputs go to `tests/output/<suite>/<timestamp>_<label>/` (gitignored).
 
 ---
 
+## Quick start (lab machine)
+
+### 1. Prerequisites
+
+- Basler **a2A1920-160umPRO** on USB3, arena lit, camera mounted
+- Linux with pylon SDK (`/opt/pylon` or set `-DPYLON_ROOT=` at cmake time)
+- Repo on branch `feature/calibration-tests` (or merged main once PR lands)
+
+```bash
+# From repo root — first time or after pulling new commits
+git fetch origin
+git checkout feature/calibration-tests
+git pull origin feature/calibration-tests
+
+mkdir -p build && cd build
+cmake ..
+make ferret_tracker test_one_time_setup test_param_sweep test_latency test_mount_height
+
+# USB permissions (once per machine)
+sudo make install_udev
+# unplug/replug camera, or: sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+Verify the camera is visible:
+
+```bash
+lsusb | grep -i basler
+# optional: /opt/pylon/bin/pylonviewer
+```
+
+### 2. Working directory
+
+All commands below assume **`cd build`** — paths to specs use `../tests/...`.
+
+```bash
+cd build
+export PYLON_CAMERA_CONFIG=../src/camera_config.json   # optional; default is build/bin/camera_config.json
+```
+
+After `make`, `camera_config.json` is copied to `build/bin/`. Edit either that
+file or `src/camera_config.json` (re-copy or symlink if you prefer the src copy).
+
+### 3. Recommended full calibration run
+
+Run in this order. Keep arena lighting **stable** across sweeps. Let the
+camera **warm up** 5–10 min before sweeps.
+
+```bash
+cd build
+
+# Step 0 — one-time rig check (after mount / lens / lighting change)
+./bin/test_one_time_setup --settings ../tests/one_time_settings.json
+
+# Step 1 — exposure (pick row from sweep.csv: high laplacian_var, mean_gray ~128–180)
+./bin/test_param_sweep --sweep ../tests/sweep_configs/exposure_sweep.json
+# optional wider range:
+./bin/test_param_sweep --sweep ../tests/sweep_configs/exposure_extended_sweep.json
+
+# Step 2 — gain (quantify noise cost; keep as low as brightness allows)
+./bin/test_param_sweep --sweep ../tests/sweep_configs/gain_sweep.json
+
+# Step 3 — AOI / resolution (16 presets; check fov_mm + achieved_fps)
+./bin/test_param_sweep --sweep ../tests/sweep_configs/resolution_sweep.json
+# if mount height ≠ 1.2 m:
+./bin/test_param_sweep --sweep ../tests/sweep_configs/resolution_sweep.json --gsd 1.29
+
+# Step 4 — fine-tune vertical centering (optional)
+./bin/test_param_sweep --sweep ../tests/sweep_configs/offset_y_sweep.json
+
+# Step 5 — lock winners into camera_config.json, then validate height
+./bin/test_mount_height --height-cm 120 --duration 30 --warmup-secs 30
+
+# Step 6 — latency + distance accuracy (empty arena during warmup!)
+./bin/test_latency --duration 30 --warmup-secs 30
+
+# Step 7 — production smoke test
+./bin/ferret_tracker --display
+```
+
+### 4. Optional / secondary sweeps
+
+Run only if you are exploring a specific trade-off:
+
+```bash
+cd build
+
+./bin/test_param_sweep --sweep ../tests/sweep_configs/frame_rate_sweep.json
+./bin/test_param_sweep --sweep ../tests/sweep_configs/frame_rate_enable_sweep.json
+./bin/test_param_sweep --sweep ../tests/sweep_configs/black_level_sweep.json
+./bin/test_param_sweep --sweep ../tests/sweep_configs/gamma_sweep.json
+./bin/test_param_sweep --sweep ../tests/sweep_configs/offset_x_sweep.json
+./bin/test_param_sweep --sweep ../tests/sweep_configs/scaling_sweep.json
+./bin/test_param_sweep --sweep ../tests/sweep_configs/binning_sweep.json
+./bin/test_param_sweep --sweep ../tests/sweep_configs/ultra_short_exposure_sweep.json
+./bin/test_param_sweep --sweep ../tests/sweep_configs/throughput_sweep.json
+```
+
+### 5. Where outputs go
+
+```text
+tests/output/
+  one_time_setup/<timestamp>_rig/
+    setup_report.json
+    <timestamp>_one_time_verify_f000.png
+  param_sweep/<timestamp>_<label>/
+    sweep.csv | resolution.csv | binning.csv | camera_preset.csv
+    <timestamp>_<prefix>_fNNN.png
+  latency/<timestamp>_latency/
+    frames.csv
+    summary.csv
+  mount_height/<timestamp>_h120cm/
+    stills/          # annotated PNGs ~1 Hz
+    frames.csv
+    summary.csv
+```
+
+Inspect CSVs with any spreadsheet tool, or:
+
+```bash
+column -t -s, tests/output/param_sweep/*/sweep.csv | less -S
+```
+
+### 6. CLI reference (all tools)
+
+| Flag | Tools | Description |
+|------|-------|-------------|
+| `--settings <json>` | `test_one_time_setup` | Rig settings file (default `tests/one_time_settings.json`) |
+| `--sweep <json>` | `test_param_sweep` | **Required.** Sweep spec under `tests/sweep_configs/` |
+| `--height-cm <cm>` | `test_mount_height` | **Required.** Physical mount height |
+| `--duration <s>` | `test_latency`, `test_mount_height` | Capture length (default 30) |
+| `--warmup-secs <s>` | `test_latency`, `test_mount_height` | MOG2 background warmup (default 30) |
+| `--gsd <mm/px>` | `test_param_sweep`, `test_latency`, `test_mount_height` | Override GSD (default 1.035 @ 1.2 m) |
+| `--camera-config <path>` | all | Override `camera_config.json` lookup |
+| `--output <dir>` | all | Output root (default `tests/output`) |
+| `--verbose` | all | Debug logging |
+
+**Usage one-liners:**
+
+```bash
+test_one_time_setup  --settings <json> [--camera-config <path>] [--output <dir>] [--verbose]
+test_param_sweep     --sweep <json> [--gsd <mm/px>] [--camera-config <path>] [--output <dir>] [--verbose]
+test_latency         [--duration <s>] [--warmup-secs <s>] [--gsd <mm/px>] [--camera-config <path>] [--output <dir>] [--verbose]
+test_mount_height    --height-cm <cm> [--duration <s>] [--warmup-secs <s>] [--gsd <mm/px>] [--camera-config <path>] [--output <dir>] [--verbose]
+```
+
+### 7. After calibration — production tracker
+
+Copy winning values into `src/camera_config.json` (or `build/bin/camera_config.json`),
+then:
+
+```bash
+cd build
+./bin/ferret_tracker              # headless telemetry on stdout
+./bin/ferret_tracker --display    # live overlay (needs DISPLAY / desktop session)
+./bin/ferret_tracker --verbose --log-file /tmp/ferret.log
+./bin/ferret_tracker --camera-config /path/to/camera_config.json
+```
+
+Keep the arena **empty for 30 s** on startup while the background model warms up.
+
+---
+
 ## `test_one_time_setup` — one-time rig settings
 
 Run **once** after mounting the camera, changing the lens, or relighting the arena.
