@@ -119,13 +119,27 @@ json read_camera_state(Pylon::CBaslerUniversalInstantCamera& camera) {
 	state["height"] = camera.Height.GetValue();
 	state["offset_x"] = camera.OffsetX.GetValue();
 	state["offset_y"] = camera.OffsetY.GetValue();
-	state["binning_horizontal"] = camera.BinningHorizontal.GetValue();
-	state["binning_vertical"] = camera.BinningVertical.GetValue();
-	state["scaling_horizontal"] = camera.ScalingHorizontal.GetValue();
-	state["reverse_x"] = camera.ReverseX.GetValue();
-	state["reverse_y"] = camera.ReverseY.GetValue();
-	state["black_level"] = camera.BlackLevel.GetValue();
-	state["gamma"] = camera.Gamma.GetValue();
+	if (camera.BinningHorizontal.IsReadable()) {
+		state["binning_horizontal"] = camera.BinningHorizontal.GetValue();
+	}
+	if (camera.BinningVertical.IsReadable()) {
+		state["binning_vertical"] = camera.BinningVertical.GetValue();
+	}
+	if (camera.ScalingHorizontal.IsReadable()) {
+		state["scaling_horizontal"] = camera.ScalingHorizontal.GetValue();
+	}
+	if (camera.ReverseX.IsReadable()) {
+		state["reverse_x"] = camera.ReverseX.GetValue();
+	}
+	if (camera.ReverseY.IsReadable()) {
+		state["reverse_y"] = camera.ReverseY.GetValue();
+	}
+	if (camera.BlackLevel.IsReadable()) {
+		state["black_level"] = camera.BlackLevel.GetValue();
+	}
+	if (camera.Gamma.IsReadable()) {
+		state["gamma"] = camera.Gamma.GetValue();
+	}
 	state["exposure_time_us"] = camera.ExposureTime.GetValue();
 	state["gain_db"] = camera.Gain.GetValue();
 	state["frame_rate_enable"] = camera.AcquisitionFrameRateEnable.GetValue();

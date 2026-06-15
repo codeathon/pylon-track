@@ -1,6 +1,7 @@
 #include "camera_config.h"
 #include "logger.h"
 
+#include <cmath>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -35,28 +36,59 @@ T require_field(const nlohmann::json& j, const char* key) {
 	return j.at(key).get<T>();
 }
 
+// Optional GenICam nodes vary by camera model / pylon build — never hard-fail
+// production unless the caller marks the feature required (core AOI/exposure).
+template<typename FeatureT, typename ValueT>
+void set_if_writable(FeatureT& feature, const ValueT& value, const char* name,
+	bool required = false)
+{
+	try {
+		if (!feature.IsWritable()) {
+			if (required) {
+				throw std::runtime_error(std::string(name) + " is not writable");
+			}
+			log_debug("camera", std::string("Skipping ") + name + " (not writable)");
+			return;
+		}
+		feature.SetValue(value);
+	} catch (const GenICam::GenericException& e) {
+		if (required) {
+			throw std::runtime_error(std::string(name) + ": " + e.GetDescription());
+		}
+		log_warn("camera", std::string("Skipping ") + name + ": "
+			+ e.GetDescription());
+	} catch (const Pylon::GenericException& e) {
+		if (required) {
+			throw std::runtime_error(std::string(name) + ": " + e.GetDescription());
+		}
+		log_warn("camera", std::string("Skipping ") + name + ": "
+			+ e.GetDescription());
+	}
+}
+
 void apply_binning_selector(CBaslerUniversalInstantCamera& cam,
 	const std::string& selector)
 {
-	// ace 2 USB GenICam values: Region1 = FPGA binning, Sensor = sensor binning.
-	// JSON specs use "FPGA" as a readable alias for Region1.
 	if (selector == "FPGA" || selector == "Region1") {
-		cam.BinningSelector.SetValue(BinningSelector_Region1);
+		set_if_writable(cam.BinningSelector, BinningSelector_Region1,
+			"BinningSelector");
 	} else if (selector == "Sensor") {
-		cam.BinningSelector.SetValue(BinningSelector_Sensor);
+		set_if_writable(cam.BinningSelector, BinningSelector_Sensor,
+			"BinningSelector");
 	} else {
 		throw std::runtime_error("Unsupported binning_selector: " + selector);
 	}
 }
 
 void apply_exposure_time_mode(CBaslerUniversalInstantCamera& cam,
-	const std::string& mode)
+	const std::string& mode, bool required = false)
 {
-	// ace 2 USB: Standard (not "Common") and UltraShort.
 	if (mode == "Common" || mode == "Standard") {
-		cam.BslExposureTimeMode.SetValue(BslExposureTimeMode_Standard);
+		set_if_writable(cam.BslExposureTimeMode, BslExposureTimeMode_Standard,
+			"BslExposureTimeMode", required);
 	} else if (mode == "UltraShort") {
-		cam.BslExposureTimeMode.SetValue(BslExposureTimeMode_UltraShort);
+		set_if_writable(cam.BslExposureTimeMode, BslExposureTimeMode_UltraShort,
+			"BslExposureTimeMode", true);
 	} else {
 		throw std::runtime_error("Unsupported exposure_time_mode: " + mode);
 	}
@@ -66,8 +98,9 @@ void apply_throughput_limit(CBaslerUniversalInstantCamera& cam,
 	const CameraSettings& s)
 {
 	if (s.device_link_throughput_limit == "Off") {
-		cam.DeviceLinkThroughputLimitMode.SetValue(
-			DeviceLinkThroughputLimitMode_Off);
+		set_if_writable(cam.DeviceLinkThroughputLimitMode,
+			DeviceLinkThroughputLimitMode_Off,
+			"DeviceLinkThroughputLimitMode", true);
 		return;
 	}
 	if (s.device_link_throughput_limit != "On") {
@@ -79,11 +112,13 @@ void apply_throughput_limit(CBaslerUniversalInstantCamera& cam,
 		throw std::runtime_error(
 			"device_link_throughput_mbps required when throughput limit is On");
 	}
-	// GenICam limit is bytes/s; sweep specs use Mbps for readability.
 	const int64_t bytes_per_s = static_cast<int64_t>(
 		s.device_link_throughput_mbps * 1e6 / 8.0);
-	cam.DeviceLinkThroughputLimitMode.SetValue(DeviceLinkThroughputLimitMode_On);
-	cam.DeviceLinkThroughputLimit.SetValue(bytes_per_s);
+	set_if_writable(cam.DeviceLinkThroughputLimitMode,
+		DeviceLinkThroughputLimitMode_On,
+		"DeviceLinkThroughputLimitMode", true);
+	set_if_writable(cam.DeviceLinkThroughputLimit, bytes_per_s,
+		"DeviceLinkThroughputLimit", true);
 }
 
 } // namespace
@@ -147,7 +182,6 @@ bool load_camera_config(const std::string& path, CameraSettings& out) {
 		out.trigger_mode = require_field<std::string>(j, "trigger_mode");
 		out.device_link_throughput_limit =
 			require_field<std::string>(j, "device_link_throughput_limit");
-		// Optional fields — older camera_config.json copies still load.
 		out.exposure_time_mode = j.value("exposure_time_mode", "Standard");
 		out.device_link_throughput_mbps =
 			j.value("device_link_throughput_mbps", 0.0);
@@ -173,58 +207,76 @@ void configure_camera(CBaslerUniversalInstantCamera& cam, const CameraSettings& 
 	if (s.pixel_format != "Mono8") {
 		throw std::runtime_error("Unsupported pixel_format: " + s.pixel_format + " (only Mono8)");
 	}
-	cam.PixelFormat.SetValue(PixelFormat_Mono8);
+	set_if_writable(cam.PixelFormat, PixelFormat_Mono8, "PixelFormat", true);
 
 	const bool use_binning = s.binning_horizontal > 1 || s.binning_vertical > 1;
 	const bool use_scaling = s.scaling_horizontal > 0.0
 		&& s.scaling_horizontal < 1.0 - 1e-6;
 
-	// Binning and scaling are mutually exclusive on ace 2.
+	// Only touch binning/scaling when non-default — avoids optional nodes that
+	// may be absent on some firmware/pylon builds (CFloatParameter not found).
 	if (use_binning) {
 		apply_binning_selector(cam, s.binning_selector);
-		cam.BinningHorizontal.SetValue(s.binning_horizontal);
-		cam.BinningVertical.SetValue(s.binning_vertical);
-		cam.ScalingHorizontal.SetValue(1.0);
+		set_if_writable(cam.BinningHorizontal, s.binning_horizontal,
+			"BinningHorizontal", true);
+		set_if_writable(cam.BinningVertical, s.binning_vertical,
+			"BinningVertical", true);
 	} else if (use_scaling) {
-		cam.BinningHorizontal.SetValue(1);
-		cam.BinningVertical.SetValue(1);
-		cam.ScalingHorizontal.SetValue(s.scaling_horizontal);
-	} else {
-		cam.BinningHorizontal.SetValue(1);
-		cam.BinningVertical.SetValue(1);
-		cam.ScalingHorizontal.SetValue(1.0);
+		set_if_writable(cam.BinningHorizontal, 1, "BinningHorizontal");
+		set_if_writable(cam.BinningVertical, 1, "BinningVertical");
+		set_if_writable(cam.ScalingHorizontal, s.scaling_horizontal,
+			"ScalingHorizontal", true);
 	}
 
-	cam.Width.SetValue(s.width);
-	cam.Height.SetValue(s.height);
-	cam.OffsetX.SetValue(s.offset_x);
-	cam.OffsetY.SetValue(s.offset_y);
+	set_if_writable(cam.Width, s.width, "Width", true);
+	set_if_writable(cam.Height, s.height, "Height", true);
+	set_if_writable(cam.OffsetX, s.offset_x, "OffsetX", true);
+	set_if_writable(cam.OffsetY, s.offset_y, "OffsetY", true);
 
-	cam.ReverseX.SetValue(s.reverse_x);
-	cam.ReverseY.SetValue(s.reverse_y);
+	if (s.reverse_x) {
+		set_if_writable(cam.ReverseX, true, "ReverseX");
+	}
+	if (s.reverse_y) {
+		set_if_writable(cam.ReverseY, true, "ReverseY");
+	}
 
-	cam.BlackLevel.SetValue(s.black_level);
-	cam.Gamma.SetValue(s.gamma);
+	if (s.black_level != 0) {
+		set_if_writable(cam.BlackLevel, s.black_level, "BlackLevel");
+	}
 
-	apply_exposure_time_mode(cam, s.exposure_time_mode);
+	if (std::abs(s.gamma - 1.0) > 1e-6) {
+		set_if_writable(cam.Gamma, s.gamma, "Gamma");
+	}
 
-	cam.ExposureAuto.SetValue(s.exposure_auto ? ExposureAuto_Continuous : ExposureAuto_Off);
+	if (s.exposure_time_mode == "UltraShort") {
+		apply_exposure_time_mode(cam, s.exposure_time_mode, true);
+	} else if (s.exposure_time_mode != "Standard" && s.exposure_time_mode != "Common") {
+		apply_exposure_time_mode(cam, s.exposure_time_mode, true);
+	}
+
+	set_if_writable(cam.ExposureAuto,
+		s.exposure_auto ? ExposureAuto_Continuous : ExposureAuto_Off,
+		"ExposureAuto", true);
 	if (!s.exposure_auto) {
-		cam.ExposureTime.SetValue(s.exposure_time_us);
+		set_if_writable(cam.ExposureTime, s.exposure_time_us, "ExposureTime", true);
 	}
 
-	cam.GainAuto.SetValue(s.gain_auto ? GainAuto_Continuous : GainAuto_Off);
+	set_if_writable(cam.GainAuto,
+		s.gain_auto ? GainAuto_Continuous : GainAuto_Off,
+		"GainAuto", true);
 	if (!s.gain_auto) {
-		cam.Gain.SetValue(s.gain_db);
+		set_if_writable(cam.Gain, s.gain_db, "Gain", true);
 	}
 
-	cam.AcquisitionFrameRateEnable.SetValue(s.frame_rate_enable);
+	set_if_writable(cam.AcquisitionFrameRateEnable, s.frame_rate_enable,
+		"AcquisitionFrameRateEnable", true);
 	if (s.frame_rate_enable) {
-		cam.AcquisitionFrameRate.SetValue(s.frame_rate_fps);
+		set_if_writable(cam.AcquisitionFrameRate, s.frame_rate_fps,
+			"AcquisitionFrameRate", true);
 	}
 
 	if (s.trigger_mode == "Off") {
-		cam.TriggerMode.SetValue(TriggerMode_Off);
+		set_if_writable(cam.TriggerMode, TriggerMode_Off, "TriggerMode", true);
 	} else {
 		throw std::runtime_error("Unsupported trigger_mode: " + s.trigger_mode);
 	}
