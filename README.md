@@ -29,6 +29,7 @@ pylon-track/
 ├── CMakeLists.txt
 ├── include/                  Public headers
 │   ├── camera_config.h
+│   ├── camera_calib.h          Load calib.npz + undistort maps
 │   ├── camera_settings.h
 │   ├── display.h
 │   ├── ferret_tracker.h
@@ -37,6 +38,7 @@ pylon-track/
 ├── src/                      Implementation
 │   ├── main.cpp              Entry point, signal handling, stdout loop
 │   ├── camera_config.cpp     Load JSON + apply GenICam settings
+│   ├── camera_calib.cpp      Load calib.npz (cnpy) + build undistort maps
 │   ├── camera_config.json    Camera exposure, gain, AOI, frame rate (edit this)
 │   ├── ferret_tracker.cpp    Pylon image handler: BG subtract + track logic
 │   ├── tracker.cpp           Shared Kalman filter helper
@@ -74,7 +76,7 @@ All four are required before `cmake` will succeed:
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential cmake libopencv-dev nlohmann-json3-dev
+sudo apt install -y build-essential cmake libopencv-dev zlib1g-dev nlohmann-json3-dev
 ```
 
 `nlohmann-json3-dev` is optional but avoids CMake downloading json during configure.
@@ -152,6 +154,27 @@ export PYLON_CAMERA_CONFIG=src/camera_config.json
 ```
 
 Default lookup: `camera_config.json` next to the executable (`build/bin/`), then `src/camera_config.json` from repo root.
+
+### Lens calibration (`calib.npz`)
+
+ChArUco intrinsics from [`calibration.py`](calibration.py) correct wide-angle distortion before tracking:
+
+```bash
+python calibration.py --make-board
+python calibration.py --capture      # SPACE saves frames, q quits
+python calibration.py --calibrate    # writes calib.npz
+cp calib.npz build/bin/              # or set PYLON_CAMERA_CALIB
+```
+
+`ferret_tracker` auto-loads `calib.npz` beside the executable (or `./calib.npz` from cwd). Override or disable:
+
+```bash
+./build/bin/ferret_tracker --calib /path/to/calib.npz
+export PYLON_CAMERA_CALIB=/path/to/calib.npz
+./build/bin/ferret_tracker --no-calib   # skip even if calib.npz exists
+```
+
+**Important:** capture calibration frames at the same `width`×`height` as `camera_config.json`. The loader rejects a size mismatch.
 
 ### Logging
 

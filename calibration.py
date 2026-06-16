@@ -12,8 +12,13 @@ distortion model is actually constrained.
 Requires: opencv-contrib-python >= 4.7  (CharucoDetector API), pypylon
 
 Usage:
-  python calibrate_basler.py --capture     # live grab; press SPACE to save, q to quit
-  python calibrate_basler.py --calibrate   # compute K + dist from saved frames -> calib.npz
+  python calibration.py --make-board    # render charuco_board.png to print
+  python calibration.py --capture       # live grab; SPACE to save, q to quit
+  python calibration.py --calibrate     # compute K + dist -> calib.npz
+
+ferret_tracker loads calib.npz automatically when placed beside the binary
+(build/bin/calib.npz) or via --calib / PYLON_CAMERA_CALIB. Calibrate at the
+same width×height as camera_config.json.
 """
 
 import argparse
