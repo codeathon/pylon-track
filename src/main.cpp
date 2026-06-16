@@ -12,8 +12,8 @@
 #include "camera/camera_config.h"
 #include "camera/camera_settings.h"
 #include "camera/camera_calib.h"
-#include "ferret_tracker.h"
-#include "display.h"
+#include "tracker/ferret_tracker.h"
+#include "tracker/display.h"
 #include "log/logger.h"
 
 using namespace Pylon;

@@ -22,7 +22,7 @@
 #include "camera/camera_config.h"
 #include "camera/camera_settings.h"
 #include "camera_sweep.h"
-#include "ferret_tracker.h"
+#include "tracker/ferret_tracker.h"
 #include "log/logger.h"
 #include "test_session.h"
 
