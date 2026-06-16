@@ -45,7 +45,7 @@ cv::Mat npy_to_mat64(const cnpy::NpyArray& arr) {
 		throw std::runtime_error("unsupported numpy array rank");
 	}
 	cv::Mat m(rows, cols, CV_64F);
-	std::memcpy(m.data, arr.data<double>(), arr.num_vals() * sizeof(double));
+	std::memcpy(m.data, arr.data<double>(), arr.num_vals * sizeof(double));
 	return m;
 }
 
@@ -69,7 +69,7 @@ cv::Size read_img_size(const cnpy::NpyArray& arr) {
 }
 
 double read_scalar_double(const cnpy::NpyArray& arr) {
-	if (arr.num_vals() != 1) {
+	if (arr.num_vals != 1) {
 		throw std::runtime_error("rms must be a scalar");
 	}
 	if (arr.word_size == sizeof(double)) {
