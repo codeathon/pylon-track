@@ -40,8 +40,10 @@ MODEL_FISHEYE = 1
 EDGE_MARGIN_X = 0.18
 EDGE_MARGIN_Y = 0.12
 ZONE_GRID = 3
-# Default alpha=0 crops invalid edge pixels; straighter long edges for tracking.
-UNDISTORT_ALPHA = 0.0
+# alpha=0 over-flattens the centre while edges stay curved; ~0.25 balances both.
+UNDISTORT_ALPHA = 0.25
+MAX_CENTER_ONLY_VIEWS = 8
+EDGE_VIEW_COPIES = 2
 
 
 def make_board():
@@ -266,6 +268,60 @@ def load_frame_sets():
 	return objpoints, imgpoints, img_size, total_cov
 
 
+def frame_edge_fraction(img_pts: np.ndarray, img_size: tuple[int, int]) -> float:
+	w, h = img_size
+	mx, my = w * EDGE_MARGIN_X, h * EDGE_MARGIN_Y
+	pts = img_pts.reshape(-1, 2)
+	if len(pts) == 0:
+		return 0.0
+	on_edge = (
+		(pts[:, 0] < mx) | (pts[:, 0] > w - mx)
+		| (pts[:, 1] < my) | (pts[:, 1] > h - my)
+	)
+	return float(np.mean(on_edge))
+
+
+def rebalance_for_edges(objpoints, imgpoints, img_size):
+	"""Up-weight peripheral corners; cap centre-only frames that make the middle too flat."""
+	w, h = img_size
+	mx, my = w * EDGE_MARGIN_X, h * EDGE_MARGIN_Y
+	out_obj, out_img = [], []
+	center_only_kept = 0
+
+	for op, ip in zip(objpoints, imgpoints):
+		pts = ip.reshape(-1, 2)
+		edge_idx = [
+			i for i, (x, y) in enumerate(pts)
+			if x < mx or x > w - mx or y < my or y > h - my
+		]
+		edge_frac = len(edge_idx) / len(pts)
+
+		if edge_frac > 0.2 and len(edge_idx) >= 4:
+			out_obj.append(op)
+			out_img.append(ip)
+			op_e = op[edge_idx]
+			ip_e = ip[edge_idx]
+			for _ in range(EDGE_VIEW_COPIES):
+				out_obj.append(op_e)
+				out_img.append(ip_e)
+		elif edge_frac <= 0.2:
+			if center_only_kept < MAX_CENTER_ONLY_VIEWS:
+				out_obj.append(op)
+				out_img.append(ip)
+				center_only_kept += 1
+			else:
+				print("  drop centre-only view (dataset already has enough middle)")
+		else:
+			out_obj.append(op)
+			out_img.append(ip)
+
+	print(
+		f"rebalanced {len(objpoints)} -> {len(out_obj)} views "
+		f"(edge corners ×{EDGE_VIEW_COPIES + 1}, centre-only cap {MAX_CENTER_ONLY_VIEWS})"
+	)
+	return out_obj, out_img
+
+
 def edge_band_rms(objpoints, imgpoints, k_mat, dist, img_size, model_id: int) -> dict:
 	"""Mean reprojection error in left/right edge bands (where long-edge distortion shows)."""
 	w, h = img_size
@@ -314,28 +370,44 @@ def calibrate_fisheye(objpoints, imgpoints, img_size):
 	return rms, k_mat, dist.reshape(1, 4), MODEL_FISHEYE
 
 
+def model_score(edge: dict, overall_rms: float) -> float:
+	"""Prefer models that fit edges, not just the already-flat centre."""
+	worst_edge = max(edge.get("left", overall_rms), edge.get("right", overall_rms))
+	centre = edge.get("center", overall_rms)
+	# Penalise when centre error is much lower than edges (over-flat middle).
+	centre_skew = max(0.0, worst_edge - centre) * 0.35
+	return worst_edge + centre_skew
+
+
 def pick_model(objpoints, imgpoints, img_size, model: str, rational: bool):
+	fit_obj, fit_img = rebalance_for_edges(objpoints, imgpoints, img_size)
 	candidates = []
 	if model in ("auto", "fisheye"):
 		try:
-			rms, k, d, mid = calibrate_fisheye(objpoints, imgpoints, img_size)
+			rms, k, d, mid = calibrate_fisheye(fit_obj, fit_img, img_size)
 			edge = edge_band_rms(objpoints, imgpoints, k, d, img_size, mid)
-			score = max(edge.get("left", rms), edge.get("right", rms))
+			score = model_score(edge, rms)
 			candidates.append((score, rms, k, d, mid, "fisheye", edge))
-			print(f"  fisheye RMS {rms:.4f}  edge L/R {edge['left']:.3f}/{edge['right']:.3f}")
+			print(
+				f"  fisheye RMS {rms:.4f}  "
+				f"L/R/C {edge['left']:.3f}/{edge['right']:.3f}/{edge['center']:.3f}"
+			)
 		except cv2.error as exc:
 			print(f"  fisheye failed: {exc}")
 	if model in ("auto", "standard"):
-		rms, k, d, mid = calibrate_standard(objpoints, imgpoints, img_size, rational)
+		rms, k, d, mid = calibrate_standard(fit_obj, fit_img, img_size, rational)
 		edge = edge_band_rms(objpoints, imgpoints, k, d, img_size, mid)
-		score = max(edge.get("left", rms), edge.get("right", rms))
+		score = model_score(edge, rms)
 		candidates.append((score, rms, k, d, mid, "standard", edge))
-		print(f"  standard RMS {rms:.4f}  edge L/R {edge['left']:.3f}/{edge['right']:.3f}")
+		print(
+			f"  standard RMS {rms:.4f}  "
+			f"L/R/C {edge['left']:.3f}/{edge['right']:.3f}/{edge['center']:.3f}"
+		)
 	if not candidates:
 		sys.exit("calibration failed for all models")
 	candidates.sort(key=lambda item: item[0])
 	score, rms, k, d, mid, name, edge = candidates[0]
-	print(f"selected {name} (worst long-edge band error {score:.3f} px)")
+	print(f"selected {name} (score {score:.3f} px — edges weighted over centre)")
 	return rms, k, d, mid, name, edge
 
 
@@ -440,6 +512,13 @@ def capture(camera_config: Path, exposure_scale: float, gain_offset_db: float):
 					missing = [k for k, v in live_cov["strips"].items() if not v]
 					if missing:
 						print(f"  warning: missing long-edge strips {missing}")
+				if cids is not None and len(cids) >= 6:
+					_, img_pts = board.matchImagePoints(cc, cids)
+					if img_pts is not None and frame_edge_fraction(img_pts, (width, height)) < 0.15:
+						print(
+							"  note: centre-heavy frame — you have enough middle; "
+							"prioritise orange L/R edge strips"
+						)
 				cv2.imwrite(f"{IMG_DIR}/frame_{n:03d}.png", img)
 				n += 1
 				saved_cov = merge_coverage(saved_cov, live_cov)
@@ -470,7 +549,15 @@ def calibrate(model: str, rational: bool, alpha: float):
 	rms, k_mat, dist, model_id, model_name, edge_err = pick_model(
 		objpoints, imgpoints, img_size, model, rational)
 	print(f"\nRMS {rms:.4f} px  model={model_name}  alpha={alpha}")
-	print(f"long-edge error L={edge_err['left']:.3f} R={edge_err['right']:.3f} px")
+	print(
+		f"band error  left={edge_err['left']:.3f}  right={edge_err['right']:.3f}  "
+		f"centre={edge_err['center']:.3f} px"
+	)
+	if edge_err["center"] < 0.5 * min(edge_err["left"], edge_err["right"]):
+		print(
+			"WARNING: centre fits much better than edges — undistort will look flat "
+			"in the middle but curved elsewhere. Add more orange-band edge frames."
+		)
 	print("K =\n", k_mat)
 	print("dist =", dist.ravel())
 	save_calib_npz(k_mat, dist, img_size, rms, model_id, edge_err, alpha)
