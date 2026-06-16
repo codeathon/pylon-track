@@ -7,8 +7,8 @@
 # never open a display window.
 set(CALIB_PROD_SOURCES
 	${CMAKE_SOURCE_DIR}/src/camera/camera_config.cpp
-	${CMAKE_SOURCE_DIR}/src/tracker.cpp
-	${CMAKE_SOURCE_DIR}/src/ferret_tracker.cpp
+	${CMAKE_SOURCE_DIR}/src/tracker/tracker.cpp
+	${CMAKE_SOURCE_DIR}/src/tracker/ferret_tracker.cpp
 	${CMAKE_SOURCE_DIR}/src/log/logger.cpp
 )
 

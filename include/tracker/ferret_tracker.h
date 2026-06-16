@@ -7,7 +7,7 @@
 #include <optional>
 #include <vector>
 #include "camera/camera_calib.h"
-#include "tracker.h"
+#include "tracker/tracker.h"
 
 // Camera / optics constants for a2A1920-160umPRO at 1.2m with 4mm lens
 static constexpr float GSD_MM_PX = 1.035f;  // mm per pixel
