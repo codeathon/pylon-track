@@ -141,7 +141,7 @@ int main(int argc, char** argv) {
 			}
 		}
 
-		FerretTracker tracker(opts.enable_display, calib);
+		FerretTracker tracker(opts.enable_display, WARMUP_FRAMES, GSD_MM_PX, calib);
 		camera.RegisterImageEventHandler(&tracker,
 			RegistrationMode_Append, Cleanup_None);
 

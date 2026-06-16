@@ -4,6 +4,10 @@ Real-time dual-animal tracking from a Basler USB3 camera using the [Basler pylon
 
 **Platform:** Linux only (tested workflow targets Ubuntu with USB3 Basler cameras).
 
+A companion **calibration test suite** under [`tests/`](tests/) sweeps camera settings,
+benchmarks two-object tracking latency, and validates mounting height — see
+[Calibration and testing](#calibration-and-testing).
+
 ## What it does
 
 1. Opens the first available Basler camera (`CBaslerUniversalInstantCamera`).
@@ -45,9 +49,22 @@ pylon-track/
 │   ├── tracker.cpp           Shared Kalman filter helper
 │   ├── display.cpp           Live overlay window (helper thread)
 │   └── logger.cpp
+├── tests/                    Camera calibration suite (hardware-in-the-loop)
+│   ├── README.md             Full run protocols + Basler calibration notes
+│   ├── common/               Shared: session dirs, CSV writer, image metrics
+│   ├── sweep_configs/        Parameter + preset sweep specs (14 JSON files)
+│   ├── one_time_settings.json  Fixed rig values for test_one_time_setup
+│   ├── one_time_suite.cpp      One-time rig setup → test_one_time_setup
+│   ├── param_sweep.cpp       Config + preset sweeps → test_param_sweep
+│   ├── latency_suite.cpp     Latency benchmark → test_latency
+│   └── mount_height_suite.cpp Mount height validation → test_mount_height
 └── build/                    Out-of-source build (created by you)
     └── bin/
-        ├── ferret_tracker      Executable output
+        ├── ferret_tracker      Production tracker
+        ├── test_one_time_setup Calibration: one-time rig settings + report
+        ├── test_param_sweep    Calibration: parameter + preset sweeps
+        ├── test_latency        Calibration: two-object latency benchmark
+        ├── test_mount_height   Calibration: mounting height validation
         └── camera_config.json  Copied from src/ at build time
 ```
 
@@ -110,8 +127,12 @@ ls /usr/lib/x86_64-linux-gnu/cmake/opencv4/OpenCVConfig.cmake
 cd pylon-track
 mkdir -p build && cd build
 cmake -DPYLON_ROOT=/opt/pylon ..
-make ferret_tracker
+make
 ```
+
+This builds `ferret_tracker` and the calibration tools (`test_param_sweep`,
+`test_latency`, `test_mount_height`). Disable the suite with
+`-DBUILD_CALIBRATION_TESTS=OFF` if you only need the production binary.
 
 If pylon is installed elsewhere:
 
@@ -140,12 +161,22 @@ Edit [`src/camera_config.json`](src/camera_config.json) to tune brightness and i
 | Field | Default | Unit / notes |
 |-------|---------|----------------|
 | `exposure_time_us` | `2000` | Microseconds (raise to brighten, e.g. `8000`) |
+| `exposure_time_mode` | `Standard` | `Standard` (19 µs–10 s) or `UltraShort` (1–14 µs); JSON alias `Common` → `Standard` |
 | `gain_db` | `6.0` | dB (raise if still dark; adds noise) |
 | `exposure_auto` | `false` | `true` enables auto exposure |
 | `gain_auto` | `false` | `true` enables auto gain |
 | `width` / `height` | `1920` / `960` | AOI size |
 | `offset_x` / `offset_y` | `0` / `120` | AOI position |
-| `frame_rate_fps` | `200.0` | Target FPS |
+| `frame_rate_enable` | `true` | `false` = unconstrained max fps |
+| `frame_rate_fps` | `200.0` | Target FPS (when enable is true) |
+| `black_level` | `0` | Keep ≤ 64 (Basler); see `black_level_sweep.json` |
+| `gamma` | `1.0` | Leave at 1.0 for CV / tracking |
+| `binning_horizontal` / `binning_vertical` | `1` / `1` | 2×2 sensor binning doubles effective pixel size |
+| `binning_selector` | `Sensor` | `Sensor` or `FPGA` (Pylon: `Region1`) |
+| `scaling_horizontal` | `1.0` | &lt; 1.0 downscales in-camera; mutually exclusive with binning |
+| `reverse_x` / `reverse_y` | `false` | Flip image to match mount orientation |
+| `trigger_mode` | `Off` | Free-run acquisition |
+| `device_link_throughput_limit` | `Off` | `On` + `device_link_throughput_mbps` caps USB bandwidth |
 
 Override config path (first match wins):
 
@@ -278,11 +309,191 @@ OnImageGrabbed (zero-copy cv::Mat on frame buffer)
 main loop reads TrackState → printf distance + kinematics
 ```
 
+## Calibration and testing
+
+Hardware-in-the-loop tools under [`tests/`](tests/) help choose `camera_config.json`
+values, quantify tracking latency, and validate camera mounting height. These are
+**not automated unit tests** — each tool needs the Basler camera attached on the
+lab Linux box.
+
+Full run protocols, CSV column definitions, and Basler image-quality guidance:
+[`tests/README.md`](tests/README.md) — includes **quick-start commands**, full
+lab workflow, CLI flags, and output paths.
+
+### Quick start on the lab machine
+
+```bash
+git pull origin feature/calibration-tests
+cd build && cmake .. && make
+sudo make install_udev    # once
+
+cd build
+./bin/test_one_time_setup --settings ../tests/one_time_settings.json
+./bin/test_param_sweep --sweep ../tests/sweep_configs/exposure_sweep.json
+./bin/test_param_sweep --sweep ../tests/sweep_configs/gain_sweep.json
+./bin/test_param_sweep --sweep ../tests/sweep_configs/resolution_sweep.json
+./bin/test_mount_height --height-cm 120 --duration 30
+./bin/test_latency --duration 30 --warmup-secs 30
+./bin/ferret_tracker --display
+```
+
+See [`tests/README.md`](tests/README.md) for every sweep command, optional sweeps,
+`--gsd` / `--camera-config` flags, and where CSVs/PNGs are written.
+
+### Calibration tools
+
+| Tool | Question it answers |
+|------|---------------------|
+| `test_one_time_setup` | Are fixed rig settings applied and verified (one-time per mount/lens/light)? |
+| `test_param_sweep` | Best exposure / gain / fps / AOI / binning / black level / … (see `sweep_configs/`) |
+| `test_latency` | How fast does grab → distance-between-objects run at fixed capture rate? |
+| `test_mount_height` | At this height, do objects still resolve (≥200 px²) and measure accurately? |
+
+Recommended order: **one_time_setup** → **param sweeps** (exposure/gain, resolution, …) →
+**mount height** at candidate heights → **latency** at each height to confirm
+distance accuracy.
+
+### Build calibration tools
+
+Built by default with `make` (see [Build](#build)). Binaries:
+
+```text
+build/bin/test_one_time_setup
+build/bin/test_param_sweep
+build/bin/test_latency
+build/bin/test_mount_height
+```
+
+Outputs land in `tests/output/<suite>/<timestamp>_<label>/` (gitignored).
+
+### `test_one_time_setup` — one-time rig settings
+
+```bash
+./bin/test_one_time_setup --settings ../tests/one_time_settings.json
+```
+
+Applies fixed settings from JSON, captures a verification frame, writes
+`setup_report.json`. Flat-field still requires pylon Viewer (see `manual_steps`).
+
+### `test_param_sweep` — parameter and preset sweeps
+
+One binary; spec format auto-detected (`parameter`+`values`, or `presets` with
+optional `preset_type`: `resolution` | `binning` | `camera`). Full list:
+[`tests/sweep_configs/`](tests/sweep_configs/).
+
+**Single-parameter** — holds every other setting at the `camera_config.json`
+baseline and steps one field (exposure, gain, fps, …):
+
+```bash
+cd build
+./bin/test_param_sweep --sweep ../tests/sweep_configs/exposure_sweep.json
+```
+
+All specs in [`tests/sweep_configs/`](tests/sweep_configs/):
+
+| File | Sweeps |
+|------|--------|
+| `exposure_sweep.json` | Exposure 250–4000 µs |
+| `exposure_extended_sweep.json` | Exposure 19 µs–5000 µs (Standard mode) |
+| `ultra_short_exposure_sweep.json` | Standard + UltraShort exposure presets |
+| `gain_sweep.json` | Gain 0–24 dB |
+| `frame_rate_sweep.json` | Target fps cap |
+| `frame_rate_enable_sweep.json` | Capped vs free-run max fps |
+| `resolution_sweep.json` | 16 AOI width×height×offset combos |
+| `offset_x_sweep.json` / `offset_y_sweep.json` | AOI centering |
+| `black_level_sweep.json` | Black level 0–64 |
+| `gamma_sweep.json` | Gamma 0.5–2.0 |
+| `scaling_sweep.json` | In-camera scaling (binning must be off) |
+| `binning_sweep.json` | Sensor vs FPGA (`Region1`) binning 1×1–4×4 |
+| `throughput_sweep.json` | USB throughput limit on/off |
+
+Single-parameter runs write `sweep.csv` + sample PNGs. Pick mean gray
+~128–180, low clipping, high Laplacian variance.
+
+**Resolution / AOI presets** — steps width×height+offset combinations:
+
+```bash
+./bin/test_param_sweep --sweep ../tests/sweep_configs/resolution_sweep.json
+./bin/test_param_sweep --sweep ../tests/sweep_configs/resolution_sweep.json --gsd 1.29
+```
+
+Spec: [`resolution_sweep.json`](tests/sweep_configs/resolution_sweep.json).
+Outputs: `resolution.csv` (FOV in mm, fps, image metrics) + PNGs. Use `--gsd`
+if mount height differs from 1.2 m.
+
+**Binning presets** (`preset_type: binning`) → `binning.csv`:
+
+```bash
+./bin/test_param_sweep --sweep ../tests/sweep_configs/binning_sweep.json
+```
+
+**Compound presets** (`preset_type: camera`) — exposure mode + time, throughput,
+etc. → `camera_preset.csv`:
+
+```bash
+./bin/test_param_sweep --sweep ../tests/sweep_configs/ultra_short_exposure_sweep.json
+```
+
+### `test_latency` — two-object latency benchmark
+
+Runs the **same pipeline** as production (`FerretTracker`: MOG2 + Kalman) and
+records per-frame kinematics plus grab-to-distance latency:
+
+```bash
+./bin/test_latency --duration 30 --warmup-secs 30
+```
+
+Protocol: keep the arena **empty** during warmup, then move two objects at
+known speeds (slow / medium / fast across separate runs).
+
+Per run:
+
+- `frames.csv` — speeds, centroids (px and mm), distance (mm), `latency_us`, validity flags
+- `summary.csv` — achieved fps, valid-pair %, latency mean / p50 / p95 / max
+
+Shared flags: `--camera-config`, `--output`, `--gsd`, `--verbose`.
+
+### `test_mount_height` — mounting height validation
+
+Operator-in-the-loop: mount the camera at a candidate height, then:
+
+```bash
+./bin/test_mount_height --height-cm 120 --duration 30
+```
+
+- Rescales GSD from the 1.2 m baseline (`1.035 mm/px × height / 120`)
+- Saves annotated stills (~1 Hz) in `stills/` — contours, boxes, blob area in px²
+- Runs the suite-2 measurement loop; `frames.csv` includes `height_cm`
+
+Compare `distance_mm` in the CSV against a tape-measured separation. Repeat at
+each candidate height (e.g. 100, 120, 150 cm) and compare stills for blobs
+above the 200 px² tracking floor.
+
+### Basler calibration (summary)
+
+Distilled from [Basler image-quality docs](https://docs.baslerweb.com/optimizing-image-quality):
+
+- **Motion blur:** `blur_px = speed_mm_s × exposure_s / GSD` — keep under ~1 px;
+  at 1 m/s and 1.035 mm/px, exposure should stay under ~1 ms.
+- **Brightness:** target ~50–70 % of Mono8 range; avoid clipping at 0 or 255.
+- **Gain:** amplifies noise equally with signal — prefer light/exposure first.
+- **Frame period:** at 200 fps, exposure must fit within ~5000 µs minus readout.
+- **pylon Viewer:** use *Automatic Image Adjustment* for a baseline, then lock
+  values into `camera_config.json`; *Flat-Field Correction* for vignetting with
+  the 4 mm lens.
+
+See [`tests/README.md`](tests/README.md) for the full GSD-vs-height table and
+metric interpretation.
+
 ## CMake targets
 
 | Target | Command | Description |
 |--------|---------|-------------|
-| `ferret_tracker` | `make ferret_tracker` | Build executable |
+| `ferret_tracker` | `make ferret_tracker` | Production tracker executable |
+| `test_one_time_setup` | `make test_one_time_setup` | Calibration: one-time rig settings |
+| `test_param_sweep` | `make test_param_sweep` | Calibration: parameter + preset sweeps |
+| `test_latency` | `make test_latency` | Calibration: latency benchmark |
+| `test_mount_height` | `make test_mount_height` | Calibration: mount height validation |
 | `run_rt` | `make run_rt` | Run with SCHED_FIFO priority |
 | `install_udev` | `make install_udev` | Install Basler USB udev rules |
 
@@ -298,6 +509,9 @@ main loop reads TrackState → printf distance + kinematics
 | No valid tracks after warmup | Lighting, gain (target ~80–100 DN background), arena contrast |
 | Low frame rate | AOI size, `DeviceLinkThroughputLimitMode`, USB3 port |
 | High jitter | `make run_rt`, CPU isolation, reduce pipeline load |
+| Calibration tools missing after build | Ensure `BUILD_CALIBRATION_TESTS=ON` (default); run `make` not only `make ferret_tracker` |
+| `test_latency` valid-pair % low | Empty arena during warmup; two distinct moving blobs; check contour area ≥200 px² |
+| Sweep images all dark / clipped | Adjust `tests/sweep_configs/` ranges; brighten arena lighting before sweeping gain |
 
 ## License
 

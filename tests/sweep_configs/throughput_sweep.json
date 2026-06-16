@@ -1,0 +1,27 @@
+{
+	"preset_type": "camera",
+	"frames_per_preset": 100,
+	"save_images": 1,
+	"presets": [
+		{
+			"label": "throughput_off",
+			"device_link_throughput_limit": "Off",
+			"device_link_throughput_mbps": 0
+		},
+		{
+			"label": "throughput_300mbps",
+			"device_link_throughput_limit": "On",
+			"device_link_throughput_mbps": 300
+		},
+		{
+			"label": "throughput_200mbps",
+			"device_link_throughput_limit": "On",
+			"device_link_throughput_mbps": 200
+		},
+		{
+			"label": "throughput_150mbps",
+			"device_link_throughput_limit": "On",
+			"device_link_throughput_mbps": 150
+		}
+	]
+}

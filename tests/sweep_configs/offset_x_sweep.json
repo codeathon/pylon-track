@@ -1,0 +1,6 @@
+{
+	"parameter": "offset_x",
+	"values": [0, 160, 320, 480, 640],
+	"frames_per_value": 50,
+	"save_images": 2
+}
