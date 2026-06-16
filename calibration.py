@@ -44,6 +44,8 @@ ZONE_GRID = 3
 UNDISTORT_ALPHA = 0.25
 MAX_CENTER_ONLY_VIEWS = 8
 EDGE_VIEW_COPIES = 2
+MIN_POINTS_PER_VIEW = 8
+MIN_EDGE_POINTS_FOR_WEIGHT = 8
 
 
 def make_board():
@@ -255,11 +257,11 @@ def load_frame_sets():
 		img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
 		img_size = img.shape[::-1]
 		cc, cids, _, _ = detect_board(img)
-		if cids is None or len(cids) < 6:
+		if cids is None or len(cids) < MIN_POINTS_PER_VIEW:
 			print(f"  skip {os.path.basename(path)} ({0 if cids is None else len(cids)} corners)")
 			continue
 		obj_pts, img_pts = board.matchImagePoints(cc, cids)
-		if obj_pts is None or len(obj_pts) < 6:
+		if obj_pts is None or len(obj_pts) < MIN_POINTS_PER_VIEW:
 			continue
 		objpoints.append(np.asarray(obj_pts, dtype=np.float64))
 		imgpoints.append(np.asarray(img_pts, dtype=np.float64))
@@ -281,29 +283,42 @@ def frame_edge_fraction(img_pts: np.ndarray, img_size: tuple[int, int]) -> float
 	return float(np.mean(on_edge))
 
 
-def rebalance_for_edges(objpoints, imgpoints, img_size):
-	"""Up-weight peripheral corners; cap centre-only frames that make the middle too flat."""
+def view_is_degenerate(img_pts: np.ndarray, img_size: tuple[int, int]) -> bool:
+	"""Fisheye needs spread-out corners; edge-only strips with few points are ill-conditioned."""
+	pts = img_pts.reshape(-1, 2)
+	if len(pts) < MIN_POINTS_PER_VIEW:
+		return True
+	xmin, ymin = pts.min(axis=0)
+	xmax, ymax = pts.max(axis=0)
 	w, h = img_size
-	mx, my = w * EDGE_MARGIN_X, h * EDGE_MARGIN_Y
+	span = max((xmax - xmin) / w, (ymax - ymin) / h)
+	return span < 0.06
+
+
+def rebalance_for_edges(objpoints, imgpoints, img_size):
+	"""Up-weight edge-rich full frames only — never pass edge-only corner subsets to fisheye."""
 	out_obj, out_img = [], []
 	center_only_kept = 0
 
 	for op, ip in zip(objpoints, imgpoints):
-		pts = ip.reshape(-1, 2)
-		edge_idx = [
-			i for i, (x, y) in enumerate(pts)
-			if x < mx or x > w - mx or y < my or y > h - my
-		]
-		edge_frac = len(edge_idx) / len(pts)
+		if view_is_degenerate(ip, img_size):
+			print("  skip degenerate view (<8 points or corners too collinear)")
+			continue
 
-		if edge_frac > 0.2 and len(edge_idx) >= 4:
-			out_obj.append(op)
-			out_img.append(ip)
-			op_e = op[edge_idx]
-			ip_e = ip[edge_idx]
-			for _ in range(EDGE_VIEW_COPIES):
-				out_obj.append(op_e)
-				out_img.append(ip_e)
+		edge_frac = frame_edge_fraction(ip, img_size)
+		pts = ip.reshape(-1, 2)
+		w, h = img_size
+		mx, my = w * EDGE_MARGIN_X, h * EDGE_MARGIN_Y
+		edge_count = int(np.sum(
+			(pts[:, 0] < mx) | (pts[:, 0] > w - mx)
+			| (pts[:, 1] < my) | (pts[:, 1] > h - my)
+		))
+
+		if edge_frac > 0.2 and edge_count >= MIN_EDGE_POINTS_FOR_WEIGHT:
+			# Duplicate the whole frame — partial edge subsets break fisheye conditioning.
+			for _ in range(EDGE_VIEW_COPIES + 1):
+				out_obj.append(op.copy())
+				out_img.append(ip.copy())
 		elif edge_frac <= 0.2:
 			if center_only_kept < MAX_CENTER_ONLY_VIEWS:
 				out_obj.append(op)
@@ -315,9 +330,14 @@ def rebalance_for_edges(objpoints, imgpoints, img_size):
 			out_obj.append(op)
 			out_img.append(ip)
 
+	if len(out_obj) < 5:
+		raise SystemExit(
+			f"only {len(out_obj)} usable views after filtering — need >=5 spread-out frames"
+		)
+
 	print(
 		f"rebalanced {len(objpoints)} -> {len(out_obj)} views "
-		f"(edge corners ×{EDGE_VIEW_COPIES + 1}, centre-only cap {MAX_CENTER_ONLY_VIEWS})"
+		f"(full edge frames ×{EDGE_VIEW_COPIES + 1}, centre cap {MAX_CENTER_ONLY_VIEWS})"
 	)
 	return out_obj, out_img
 
@@ -354,20 +374,53 @@ def calibrate_standard(objpoints, imgpoints, img_size, rational: bool):
 	return rms, k_mat, dist, MODEL_STANDARD
 
 
+def make_initial_k(img_size: tuple[int, int]) -> np.ndarray:
+	w, h = img_size
+	focal = float(max(w, h)) * 0.85
+	k = np.zeros((3, 3), dtype=np.float64)
+	k[0, 0] = focal
+	k[1, 1] = focal
+	k[0, 2] = w / 2.0
+	k[1, 2] = h / 2.0
+	k[2, 2] = 1.0
+	return k
+
+
+def prepare_fisheye_views(objpoints, imgpoints, img_size):
+	obj, img = [], []
+	for op, ip in zip(objpoints, imgpoints):
+		if view_is_degenerate(ip, img_size):
+			continue
+		obj.append(op.reshape(-1, 1, 3).astype(np.float64))
+		img.append(ip.reshape(-1, 1, 2).astype(np.float64))
+	if len(obj) < 5:
+		raise cv2.error(f"fisheye needs >=5 non-degenerate views, got {len(obj)}")
+	return obj, img
+
+
 def calibrate_fisheye(objpoints, imgpoints, img_size):
-	obj = [op.reshape(-1, 1, 3).astype(np.float64) for op in objpoints]
-	img = [ip.reshape(-1, 1, 2).astype(np.float64) for ip in imgpoints]
-	k_mat = np.eye(3, dtype=np.float64)
-	dist = np.zeros((4, 1), dtype=np.float64)
-	flags = (
-		cv2.fisheye.CALIB_RECOMPUTE_EXTRINSIC
-		+ cv2.fisheye.CALIB_CHECK_COND
-		+ cv2.fisheye.CALIB_FIX_SKEW
+	obj, img = prepare_fisheye_views(objpoints, imgpoints, img_size)
+	criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 1e-6)
+	# CALIB_CHECK_COND aborts on ill-conditioned Jacobians — retry without it.
+	attempts = (
+		(cv2.fisheye.CALIB_RECOMPUTE_EXTRINSIC + cv2.fisheye.CALIB_FIX_SKEW, False),
+		(cv2.fisheye.CALIB_RECOMPUTE_EXTRINSIC + cv2.fisheye.CALIB_FIX_SKEW, True),
+		(cv2.fisheye.CALIB_RECOMPUTE_EXTRINSIC, True),
 	)
-	criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 120, 1e-7)
-	rms, k_mat, dist, _, _ = cv2.fisheye.calibrate(
-		obj, img, img_size, k_mat, dist, None, None, flags, criteria)
-	return rms, k_mat, dist.reshape(1, 4), MODEL_FISHEYE
+	last_err = None
+	for flags, use_guess in attempts:
+		k_mat = make_initial_k(img_size) if use_guess else np.eye(3, dtype=np.float64)
+		dist = np.zeros((4, 1), dtype=np.float64)
+		try:
+			rms, k_mat, dist, _, _ = cv2.fisheye.calibrate(
+				obj, img, img_size, k_mat, dist, None, None, flags, criteria)
+			return rms, k_mat, dist.reshape(1, 4), MODEL_FISHEYE
+		except cv2.error as exc:
+			last_err = exc
+			print(f"    fisheye retry ({exc})")
+	if last_err is not None:
+		raise last_err
+	raise cv2.error("fisheye calibration failed")
 
 
 def model_score(edge: dict, overall_rms: float) -> float:
@@ -404,7 +457,11 @@ def pick_model(objpoints, imgpoints, img_size, model: str, rational: bool):
 			f"L/R/C {edge['left']:.3f}/{edge['right']:.3f}/{edge['center']:.3f}"
 		)
 	if not candidates:
-		sys.exit("calibration failed for all models")
+		sys.exit(
+			"calibration failed for all models — try:\n"
+			"  python calibration.py --calibrate --model standard\n"
+			"  or add more frames with >=8 spread-out corners per view"
+		)
 	candidates.sort(key=lambda item: item[0])
 	score, rms, k, d, mid, name, edge = candidates[0]
 	print(f"selected {name} (score {score:.3f} px — edges weighted over centre)")
@@ -505,8 +562,8 @@ def capture(camera_config: Path, exposure_scale: float, gain_offset_db: float):
 		key = cv2.waitKey(1) & 0xFF
 
 		if key == ord(" "):
-			if cids is None or len(cids) < 6:
-				print("  skip — need >=6 corners")
+			if cids is None or len(cids) < MIN_POINTS_PER_VIEW:
+				print(f"  skip — need >={MIN_POINTS_PER_VIEW} spread-out corners")
 			else:
 				if is_wide_frame(width, height):
 					missing = [k for k, v in live_cov["strips"].items() if not v]
