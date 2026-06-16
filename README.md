@@ -12,7 +12,7 @@ benchmarks two-object tracking latency, and validates mounting height — see
 
 1. Opens the first available Basler camera (`CBaslerUniversalInstantCamera`).
 2. Configures mono8 capture, AOI, exposure, gain, and frame rate from [`src/camera/camera_config.json`](src/camera/camera_config.json).
-3. On each frame (`src/ferret_tracker.cpp`):
+3. On each frame (`src/tracker/ferret_tracker.cpp`):
    - MOG2 background subtraction (30 s warmup — keep arena empty)
    - Morphological cleanup + contour detection
    - Assigns largest blob → ferret, second largest → prey
@@ -38,9 +38,10 @@ pylon-track/
 │   │   └── camera_settings.h
 │   ├── log/
 │   │   └── logger.h            Global thread-safe logger
-│   ├── display.h
-│   ├── ferret_tracker.h
-│   └── tracker.h
+│   └── tracker/
+│       ├── display.h
+│       ├── ferret_tracker.h
+│       └── tracker.h             Kalman filter + TrackState
 ├── src/                      Implementation
 │   ├── main.cpp              Entry point, signal handling, stdout loop
 │   ├── camera/
@@ -50,9 +51,10 @@ pylon-track/
 │   │   └── calibration.py    ChArUco lens calibration → calib.npz
 │   ├── log/
 │   │   └── logger.cpp
-│   ├── ferret_tracker.cpp    Pylon image handler: BG subtract + track logic
-│   ├── tracker.cpp           Shared Kalman filter helper
-│   └── display.cpp           Live overlay window (helper thread)
+│   └── tracker/
+│       ├── ferret_tracker.cpp Pylon image handler: BG subtract + track logic
+│       ├── tracker.cpp        Shared Kalman filter helper
+│       └── display.cpp        Live overlay window (helper thread)
 ├── tests/                    Camera calibration suite (hardware-in-the-loop)
 │   ├── README.md             Full run protocols + Basler calibration notes
 │   ├── common/               Shared: session dirs, CSV writer, image metrics
@@ -249,7 +251,7 @@ Ferret: (450, 320)mm  850mm/s  45deg  |  Prey: (520, 410)mm  ...
 
 Requires a graphical session (`DISPLAY` set). For SSH, use X forwarding (`ssh -X`) or run on the machine with a monitor attached.
 
-On first launch, keep the **arena empty for 30 seconds** while the background model warms up (`WARMUP_FRAMES` in `include/ferret_tracker.h`).
+On first launch, keep the **arena empty for 30 seconds** while the background model warms up (`WARMUP_FRAMES` in `include/tracker/ferret_tracker.h`).
 
 ### USB access (without root)
 
@@ -273,7 +275,7 @@ sudo setcap cap_sys_nice+ep build/bin/ferret_tracker
 
 ## Camera and optics assumptions
 
-Camera GenICam settings: [`src/camera/camera_config.json`](src/camera/camera_config.json). Tracker constants in `include/ferret_tracker.h`:
+Camera GenICam settings: [`src/camera/camera_config.json`](src/camera/camera_config.json). Tracker constants in `include/tracker/ferret_tracker.h`:
 
 | Constant | Value | Meaning |
 |----------|-------|---------|
@@ -290,11 +292,11 @@ Change these if your mount height, lens, or arena size differs.
 
 | Parameter | Location | Purpose |
 |-----------|----------|---------|
-| Contour area 200–60000 px² | `src/ferret_tracker.cpp` | Noise floor / max ferret blob |
-| Merge threshold 15000 px² | `src/ferret_tracker.cpp` | Single-blob = ferret+prey overlap |
-| MOG2 history 500, var threshold 16 | `src/ferret_tracker.cpp` | Background model |
-| BG learning rate 0.01 → 0.002 | `src/ferret_tracker.cpp` | Fast warmup, slow during experiment |
-| Morph kernel 7×7 ellipse | `src/ferret_tracker.cpp` | Remove sub-paw noise |
+| Contour area 200–60000 px² | `src/tracker/ferret_tracker.cpp` | Noise floor / max ferret blob |
+| Merge threshold 15000 px² | `src/tracker/ferret_tracker.cpp` | Single-blob = ferret+prey overlap |
+| MOG2 history 500, var threshold 16 | `src/tracker/ferret_tracker.cpp` | Background model |
+| BG learning rate 0.01 → 0.002 | `src/tracker/ferret_tracker.cpp` | Fast warmup, slow during experiment |
+| Morph kernel 7×7 ellipse | `src/tracker/ferret_tracker.cpp` | Remove sub-paw noise |
 
 ## Architecture (data flow)
 

@@ -6,7 +6,7 @@
 #include <pylon/PylonIncludes.h>
 #include <pylon/BaslerUniversalInstantCamera.h>
 
-#include "ferret_tracker.h"
+#include "tracker/ferret_tracker.h"
 
 // Shared two-object measurement loop for the latency (suite 2) and mounting
 // height (suite 3) calibration tools. Runs the production FerretTracker

@@ -26,9 +26,9 @@ set(SOURCES
 	src/main.cpp
 	src/camera/camera_config.cpp
 	src/camera/camera_calib.cpp
-	src/tracker.cpp
-	src/ferret_tracker.cpp
-	src/display.cpp
+	src/tracker/tracker.cpp
+	src/tracker/ferret_tracker.cpp
+	src/tracker/display.cpp
 	src/log/logger.cpp
 )
 
