@@ -246,6 +246,15 @@ def draw_coverage_hud(disp, width: int, height: int, saved_cov: dict, live_cov: 
 		)
 
 
+def normalize_view_points(obj_pts, img_pts) -> tuple[np.ndarray, np.ndarray]:
+	"""OpenCV calibrators need (N,3) and (N,2); matchImagePoints shape varies by version."""
+	obj = np.asarray(obj_pts, dtype=np.float64).reshape(-1, 3)
+	img = np.asarray(img_pts, dtype=np.float64).reshape(-1, 2)
+	if obj.shape[0] != img.shape[0]:
+		raise ValueError("object/image point count mismatch")
+	return obj, img
+
+
 def load_frame_sets():
 	files = sorted(glob.glob(f"{IMG_DIR}/*.png"))
 	if len(files) < 12:
@@ -261,10 +270,16 @@ def load_frame_sets():
 			print(f"  skip {os.path.basename(path)} ({0 if cids is None else len(cids)} corners)")
 			continue
 		obj_pts, img_pts = board.matchImagePoints(cc, cids)
-		if obj_pts is None or len(obj_pts) < MIN_POINTS_PER_VIEW:
+		if obj_pts is None or img_pts is None:
 			continue
-		objpoints.append(np.asarray(obj_pts, dtype=np.float64))
-		imgpoints.append(np.asarray(img_pts, dtype=np.float64))
+		try:
+			obj, img = normalize_view_points(obj_pts, img_pts)
+		except ValueError:
+			continue
+		if len(obj) < MIN_POINTS_PER_VIEW:
+			continue
+		objpoints.append(obj)
+		imgpoints.append(img)
 		total_cov = merge_coverage(
 			total_cov, coverage_from_corners(cc, img_size[0], img_size[1]))
 	return objpoints, imgpoints, img_size, total_cov
@@ -348,16 +363,17 @@ def edge_band_rms(objpoints, imgpoints, k_mat, dist, img_size, model_id: int) ->
 	mx = w * EDGE_MARGIN_X
 	bands = {"left": [], "right": [], "center": []}
 	for obj_pts, img_pts in zip(objpoints, imgpoints):
+		op, ip = normalize_view_points(obj_pts, img_pts)
 		if model_id == MODEL_FISHEYE:
 			proj, _ = cv2.fisheye.projectPoints(
-				obj_pts.reshape(-1, 1, 3), np.zeros(3), np.zeros(3), k_mat, dist)
+				op.reshape(-1, 1, 3), np.zeros(3), np.zeros(3), k_mat, dist)
 			proj = proj.reshape(-1, 2)
 		else:
-			proj, _ = cv2.projectPoints(obj_pts, np.zeros(3), np.zeros(3), k_mat, dist)
+			proj, _ = cv2.projectPoints(
+				op.reshape(-1, 1, 3), np.zeros(3), np.zeros(3), k_mat, dist)
 			proj = proj.reshape(-1, 2)
-		err = np.linalg.norm(proj - img_pts.reshape(-1, 2), axis=1)
-		obs = img_pts.reshape(-1, 2)
-		for e, (x, _y) in zip(err, obs):
+		err = np.linalg.norm(proj - ip, axis=1)
+		for e, (x, _y) in zip(err, ip):
 			if x < mx:
 				bands["left"].append(e)
 			elif x > w - mx:
@@ -368,9 +384,18 @@ def edge_band_rms(objpoints, imgpoints, k_mat, dist, img_size, model_id: int) ->
 
 
 def calibrate_standard(objpoints, imgpoints, img_size, rational: bool):
+	obj, img = [], []
+	for op, ip in zip(objpoints, imgpoints):
+		o, p = normalize_view_points(op, ip)
+		if len(o) < MIN_POINTS_PER_VIEW:
+			continue
+		obj.append(o)
+		img.append(p)
+	if len(obj) < 5:
+		raise cv2.error(f"standard calibrate needs >=5 views, got {len(obj)}")
 	flags = cv2.CALIB_RATIONAL_MODEL if rational else 0
 	rms, k_mat, dist, _, _ = cv2.calibrateCamera(
-		objpoints, imgpoints, img_size, None, None, flags=flags)
+		obj, img, img_size, None, None, flags=flags)
 	return rms, k_mat, dist, MODEL_STANDARD
 
 
@@ -389,10 +414,11 @@ def make_initial_k(img_size: tuple[int, int]) -> np.ndarray:
 def prepare_fisheye_views(objpoints, imgpoints, img_size):
 	obj, img = [], []
 	for op, ip in zip(objpoints, imgpoints):
-		if view_is_degenerate(ip, img_size):
+		o, p = normalize_view_points(op, ip)
+		if view_is_degenerate(p, img_size):
 			continue
-		obj.append(op.reshape(-1, 1, 3).astype(np.float64))
-		img.append(ip.reshape(-1, 1, 2).astype(np.float64))
+		obj.append(o.reshape(-1, 1, 3))
+		img.append(p.reshape(-1, 1, 2))
 	if len(obj) < 5:
 		raise cv2.error(f"fisheye needs >=5 non-degenerate views, got {len(obj)}")
 	return obj, img
@@ -569,13 +595,15 @@ def capture(camera_config: Path, exposure_scale: float, gain_offset_db: float):
 					missing = [k for k, v in live_cov["strips"].items() if not v]
 					if missing:
 						print(f"  warning: missing long-edge strips {missing}")
-				if cids is not None and len(cids) >= 6:
+				if cids is not None and len(cids) >= MIN_POINTS_PER_VIEW:
 					_, img_pts = board.matchImagePoints(cc, cids)
-					if img_pts is not None and frame_edge_fraction(img_pts, (width, height)) < 0.15:
-						print(
-							"  note: centre-heavy frame — you have enough middle; "
-							"prioritise orange L/R edge strips"
-						)
+					if img_pts is not None:
+						ip = np.asarray(img_pts, dtype=np.float64).reshape(-1, 2)
+						if frame_edge_fraction(ip, (width, height)) < 0.15:
+							print(
+								"  note: centre-heavy frame — you have enough middle; "
+								"prioritise orange L/R edge strips"
+							)
 				cv2.imwrite(f"{IMG_DIR}/frame_{n:03d}.png", img)
 				n += 1
 				saved_cov = merge_coverage(saved_cov, live_cov)
