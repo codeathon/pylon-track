@@ -85,7 +85,7 @@ endif()
 message(STATUS "OpenCV version : ${OpenCV_VERSION}")
 message(STATUS "OpenCV includes: ${OpenCV_INCLUDE_DIRS}")
 
-# ── cnpy (read calibration.py calib.npz; vendored — no FetchContent/git) ───────
+# ── cnpy (read src/calibration.py calib.npz; vendored — no FetchContent/git) ──
 find_package(ZLIB REQUIRED)
 add_library(cnpy STATIC third_party/cnpy/cnpy.cpp)
 target_include_directories(cnpy PUBLIC third_party/cnpy)

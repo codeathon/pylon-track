@@ -8,11 +8,11 @@ horizontal edges better than the plain rational polynomial model.
 
 Requires: opencv-contrib-python >= 4.7  (CharucoDetector API), pypylon
 
-Usage:
-  python calibration.py --make-board
-  python calibration.py --capture
-  python calibration.py --calibrate
-  python calibration.py --preview          # raw vs undistorted grid check
+Usage (from repo root):
+  python src/calibration.py --make-board
+  python src/calibration.py --capture
+  python src/calibration.py --calibrate
+  python src/calibration.py --preview          # raw vs undistorted grid check
 """
 
 import argparse
@@ -30,8 +30,13 @@ SQUARES_Y = 7
 SQUARE_LEN = 0.035
 MARKER_LEN = 0.026
 DICTIONARY = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_250)
-IMG_DIR = "calib_frames"
-DEFAULT_CAMERA_CONFIG = "src/camera_config.json"
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+IMG_DIR = str(REPO_ROOT / "calib_frames")
+CALIB_NPZ = str(REPO_ROOT / "calib.npz")
+PREVIEW_PNG = str(REPO_ROOT / "undistort_preview.png")
+DEFAULT_CAMERA_CONFIG = str(SCRIPT_DIR / "camera_config.json")
 
 MODEL_STANDARD = 0
 MODEL_FISHEYE = 1
@@ -75,9 +80,8 @@ def resolve_camera_config(cli_path: str) -> Path:
 		return Path(cli_path)
 	for candidate in (
 		Path(os.environ.get("PYLON_CAMERA_CONFIG", "")),
-		Path("build/bin/camera_config.json"),
-		Path("src/camera_config.json"),
-		Path(DEFAULT_CAMERA_CONFIG),
+		REPO_ROOT / "build/bin/camera_config.json",
+		SCRIPT_DIR / "camera_config.json",
 	):
 		if candidate and candidate.is_file():
 			return candidate
@@ -520,7 +524,7 @@ def pick_model(objpoints, imgpoints, img_size, model: str, rational: bool):
 	if not candidates:
 		sys.exit(
 			"calibration failed for all models — try:\n"
-			"  python calibration.py --calibrate --model standard\n"
+			"  python src/calibration.py --calibrate --model standard\n"
 			"  or add more frames with >=8 spread-out corners per view"
 		)
 	candidates.sort(key=lambda item: item[0])
@@ -531,7 +535,7 @@ def pick_model(objpoints, imgpoints, img_size, model: str, rational: bool):
 
 def save_calib_npz(k_mat, dist, img_size, rms, model_id, edge_err, alpha):
 	np.savez(
-		"calib.npz",
+		CALIB_NPZ,
 		K=k_mat,
 		dist=dist,
 		img_size=np.array(img_size),
@@ -541,7 +545,7 @@ def save_calib_npz(k_mat, dist, img_size, rms, model_id, edge_err, alpha):
 		edge_err_left=np.array(edge_err.get("left", np.nan)),
 		edge_err_right=np.array(edge_err.get("right", np.nan)),
 	)
-	print("saved calib.npz")
+	print(f"saved {CALIB_NPZ}")
 
 
 def undistort_image(gray, k_mat, dist, model_id: int, alpha: float):
@@ -566,7 +570,9 @@ def draw_grid(bgr, step=80):
 		cv2.line(bgr, (0, y), (w - 1, y), (0, 255, 255), 1)
 
 
-def make_board_png(path="charuco_board.png", px_per_square=240):
+def make_board_png(path=None, px_per_square=240):
+	if path is None:
+		path = str(REPO_ROOT / "charuco_board.png")
 	img = board.generateImage((SQUARES_X * px_per_square, SQUARES_Y * px_per_square))
 	cv2.imwrite(path, img)
 	print(f"wrote {path}")
@@ -686,7 +692,7 @@ def calibrate(model: str, rational: bool, alpha: float):
 
 def preview_undistort(img_size, k_mat=None, dist=None, model_id=None, alpha=None):
 	if k_mat is None:
-		data = np.load("calib.npz")
+		data = np.load(CALIB_NPZ)
 		k_mat, dist = data["K"], data["dist"]
 		img_size = tuple(int(x) for x in data["img_size"])
 		model_id = int(data.get("model_id", MODEL_STANDARD))
@@ -705,7 +711,7 @@ def preview_undistort(img_size, k_mat=None, dist=None, model_id=None, alpha=None
 	cv2.putText(combo, "raw", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 2)
 	cv2.putText(combo, "undistorted", (img_size[0] + 20, 40),
 		cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 2)
-	out = "undistort_preview.png"
+	out = PREVIEW_PNG
 	cv2.imwrite(out, combo)
 	print(f"wrote {out} — yellow grid lines should be straight, especially on long edges")
 

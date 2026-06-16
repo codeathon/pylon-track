@@ -40,6 +40,7 @@ pylon-track/
 │   ├── camera_config.cpp     Load JSON + apply GenICam settings
 │   ├── camera_calib.cpp      Load calib.npz (cnpy) + build undistort maps
 │   ├── camera_config.json    Camera exposure, gain, AOI, frame rate (edit this)
+│   ├── calibration.py        ChArUco lens calibration → calib.npz
 │   ├── ferret_tracker.cpp    Pylon image handler: BG subtract + track logic
 │   ├── tracker.cpp           Shared Kalman filter helper
 │   ├── display.cpp           Live overlay window (helper thread)
@@ -157,12 +158,12 @@ Default lookup: `camera_config.json` next to the executable (`build/bin/`), then
 
 ### Lens calibration (`calib.npz`)
 
-ChArUco intrinsics from [`calibration.py`](calibration.py) correct wide-angle distortion before tracking:
+ChArUco intrinsics from [`src/calibration.py`](src/calibration.py) correct wide-angle distortion before tracking:
 
 ```bash
-python calibration.py --make-board
-python calibration.py --capture      # SPACE saves frames, q quits
-python calibration.py --calibrate    # writes calib.npz
+python src/calibration.py --make-board
+python src/calibration.py --capture      # SPACE saves frames, q quits
+python src/calibration.py --calibrate    # writes calib.npz (repo root)
 cp calib.npz build/bin/              # or set PYLON_CAMERA_CALIB
 ```
 
