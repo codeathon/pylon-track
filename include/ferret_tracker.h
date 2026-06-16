@@ -4,7 +4,9 @@
 #include <pylon/BaslerUniversalInstantCamera.h>
 #include <opencv2/opencv.hpp>
 #include <mutex>
+#include <optional>
 #include <vector>
+#include "camera_calib.h"
 #include "tracker.h"
 
 // Camera / optics constants for a2A1920-160umPRO at 1.2m with 4mm lens
@@ -27,7 +29,9 @@ public:
 	TrackState ferret;
 	TrackState prey;
 
-	explicit FerretTracker(bool enable_display = false);
+	// Pass loaded intrinsics to undistort each frame before background subtraction.
+	explicit FerretTracker(bool enable_display = false,
+		std::optional<CameraCalib> calib = std::nullopt);
 
 	void OnImageGrabbed(Pylon::CInstantCamera& camera,
 		const Pylon::CGrabResultPtr& result) override;
@@ -37,6 +41,10 @@ public:
 
 private:
 	bool enable_display_ = false;
+	bool use_undistort_ = false;
+	cv::Mat undist_map1_;
+	cv::Mat undist_map2_;
+	cv::Mat undist_buf_;
 	cv::Ptr<cv::BackgroundSubtractorMOG2> bg_;
 	cv::KalmanFilter kf_ferret_;
 	cv::KalmanFilter kf_prey_;

@@ -25,6 +25,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(SOURCES
 	src/main.cpp
 	src/camera_config.cpp
+	src/camera_calib.cpp
 	src/tracker.cpp
 	src/ferret_tracker.cpp
 	src/display.cpp
@@ -53,7 +54,7 @@ if(NOT OpenCV_DIR AND DEFINED ENV{OpenCV_DIR})
 	set(OpenCV_DIR "$ENV{OpenCV_DIR}" CACHE PATH "OpenCV cmake config directory")
 endif()
 
-find_package(OpenCV QUIET COMPONENTS core imgproc video highgui)
+find_package(OpenCV QUIET COMPONENTS core imgproc video highgui calib3d)
 
 if(NOT OpenCV_FOUND)
 	# Probe common install locations before failing with a helpful message.
@@ -65,7 +66,7 @@ if(NOT OpenCV_FOUND)
 	)
 		if(EXISTS "${_opencv_cmake_dir}/OpenCVConfig.cmake")
 			set(OpenCV_DIR "${_opencv_cmake_dir}" CACHE PATH "OpenCV cmake config directory" FORCE)
-			find_package(OpenCV QUIET COMPONENTS core imgproc video highgui)
+			find_package(OpenCV QUIET COMPONENTS core imgproc video highgui calib3d)
 			if(OpenCV_FOUND)
 				break()
 			endif()
@@ -75,7 +76,7 @@ endif()
 
 if(NOT OpenCV_FOUND)
 	message(FATAL_ERROR
-		"OpenCV not found (need components: core, imgproc, video, highgui).\n"
+		"OpenCV not found (need components: core, imgproc, video, highgui, calib3d).\n"
 		"  Ubuntu/Debian:  sudo apt update && sudo apt install -y libopencv-dev build-essential cmake\n"
 		"  Then reconfigure, or set OpenCV_DIR explicitly, e.g.:\n"
 		"    cmake -DOpenCV_DIR=/usr/lib/x86_64-linux-gnu/cmake/opencv4 ..")
@@ -83,6 +84,13 @@ endif()
 
 message(STATUS "OpenCV version : ${OpenCV_VERSION}")
 message(STATUS "OpenCV includes: ${OpenCV_INCLUDE_DIRS}")
+
+# ── cnpy (read src/calibration.py calib.npz; vendored — no FetchContent/git) ──
+find_package(ZLIB REQUIRED)
+add_library(cnpy STATIC third_party/cnpy/cnpy.cpp)
+target_include_directories(cnpy PUBLIC third_party/cnpy)
+target_link_libraries(cnpy PUBLIC ZLIB::ZLIB)
+
 message(STATUS "Binary output  : ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 
 # ── Platform-specific configuration ──────────────────────────────────────────
@@ -135,6 +143,8 @@ if(UNIX)
 		${PYLON_LINK_FLAGS}
 		${OpenCV_LIBS}
 		nlohmann_json::nlohmann_json
+		cnpy
+		ZLIB::ZLIB
 		pthread
 	)
 

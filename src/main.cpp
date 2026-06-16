@@ -11,6 +11,7 @@
 
 #include "camera_config.h"
 #include "camera_settings.h"
+#include "camera_calib.h"
 #include "ferret_tracker.h"
 #include "display.h"
 #include "logger.h"
@@ -26,6 +27,8 @@ struct AppOptions {
 	bool verbose = false;
 	std::string log_file;
 	std::string camera_config;
+	std::string calib_path;
+	bool disable_calib = false;
 };
 
 static bool parse_args(int argc, char** argv, AppOptions& opts) {
@@ -46,6 +49,14 @@ static bool parse_args(int argc, char** argv, AppOptions& opts) {
 				return false;
 			}
 			opts.camera_config = argv[++i];
+		} else if (std::strcmp(argv[i], "--calib") == 0) {
+			if (i + 1 >= argc) {
+				std::cerr << "ERROR: --calib requires a path argument\n";
+				return false;
+			}
+			opts.calib_path = argv[++i];
+		} else if (std::strcmp(argv[i], "--no-calib") == 0) {
+			opts.disable_calib = true;
 		} else {
 			std::cerr << "ERROR: Unknown argument: " << argv[i] << '\n';
 			return false;
@@ -111,7 +122,26 @@ int main(int argc, char** argv) {
 			return 1;
 		}
 
-		FerretTracker tracker(opts.enable_display);
+		std::optional<CameraCalib> calib;
+		if (!opts.disable_calib) {
+			const std::string calib_path =
+				resolve_calib_path(argv[0], opts.calib_path);
+			if (!calib_path.empty()) {
+				log_info("calib", "Loading lens calibration: " + calib_path);
+				calib = load_camera_calib(calib_path,
+					cv::Size(camera_settings.width, camera_settings.height));
+				if (!calib) {
+					PylonTerminate();
+					return 1;
+				}
+			} else {
+				log_info("calib",
+					"No calib.npz found — running without lens undistort "
+					"(use --calib or place calib.npz beside the executable)");
+			}
+		}
+
+		FerretTracker tracker(opts.enable_display, calib);
 		camera.RegisterImageEventHandler(&tracker,
 			RegistrationMode_Append, Cleanup_None);
 

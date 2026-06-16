@@ -1,6 +1,11 @@
 build/
 bin/
 cmake-build-*/
+calib_frames/
+calib.npz
+undistort_preview.png
+charuco_board.png
+__pycache__/
 *.o
 *.a
 *.so

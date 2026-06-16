@@ -5,14 +5,22 @@
 #include <algorithm>
 #include <sstream>
 
-FerretTracker::FerretTracker(bool enable_display)
+FerretTracker::FerretTracker(bool enable_display, std::optional<CameraCalib> calib)
 	: enable_display_(enable_display)
 	, bg_(cv::createBackgroundSubtractorMOG2(500, 16, false))
 	, kf_ferret_(make_kalman(FPS))
 	, kf_prey_(make_kalman(FPS))
 	// 7px kernel ≈ 7mm — removes debris smaller than a mouse paw
 	, morph_kernel_(cv::getStructuringElement(cv::MORPH_ELLIPSE, {7, 7}))
-{}
+{
+	if (calib && calib->enabled()) {
+		use_undistort_ = true;
+		undist_map1_ = calib->map1;
+		undist_map2_ = calib->map2;
+		undist_buf_ = cv::Mat(calib->image_size, CV_8UC1);
+		log_info("tracker", "Lens undistort enabled");
+	}
+}
 
 bool FerretTracker::get_display_snapshot(DisplaySnapshot& out) {
 	if (!enable_display_) {
@@ -46,9 +54,16 @@ void FerretTracker::OnImageGrabbed(Pylon::CInstantCamera&,
 
 	auto t0 = std::chrono::steady_clock::now();
 
-	// Zero-copy: wrap pylon buffer directly into cv::Mat — no memcpy
-	cv::Mat frame(result->GetHeight(), result->GetWidth(),
+	// Zero-copy wrap of the pylon buffer; remap into undist_buf_ when calib.npz is loaded.
+	cv::Mat frame_raw(result->GetHeight(), result->GetWidth(),
 		CV_8UC1, result->GetBuffer());
+	cv::Mat frame;
+	if (use_undistort_) {
+		cv::remap(frame_raw, undist_buf_, undist_map1_, undist_map2_, cv::INTER_LINEAR);
+		frame = undist_buf_;
+	} else {
+		frame = frame_raw;
+	}
 
 	// Background subtraction
 	// Faster learning during warmup, slow during experiment to avoid adapting to animals
