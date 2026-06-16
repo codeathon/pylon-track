@@ -9,10 +9,10 @@ horizontal edges better than the plain rational polynomial model.
 Requires: opencv-contrib-python >= 4.7  (CharucoDetector API), pypylon
 
 Usage (from repo root):
-  python src/calibration.py --make-board
-  python src/calibration.py --capture
-  python src/calibration.py --calibrate
-  python src/calibration.py --preview          # raw vs undistorted grid check
+  python src/camera/calibration.py --make-board
+  python src/camera/calibration.py --capture
+  python src/camera/calibration.py --calibrate
+  python src/camera/calibration.py --preview          # raw vs undistorted grid check
 """
 
 import argparse
@@ -32,7 +32,7 @@ MARKER_LEN = 0.026
 DICTIONARY = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_250)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent
+REPO_ROOT = SCRIPT_DIR.parent.parent
 IMG_DIR = str(REPO_ROOT / "calib_frames")
 CALIB_NPZ = str(REPO_ROOT / "calib.npz")
 PREVIEW_PNG = str(REPO_ROOT / "undistort_preview.png")
@@ -524,7 +524,7 @@ def pick_model(objpoints, imgpoints, img_size, model: str, rational: bool):
 	if not candidates:
 		sys.exit(
 			"calibration failed for all models — try:\n"
-			"  python src/calibration.py --calibrate --model standard\n"
+			"  python src/camera/calibration.py --calibrate --model standard\n"
 			"  or add more frames with >=8 spread-out corners per view"
 		)
 	candidates.sort(key=lambda item: item[0])

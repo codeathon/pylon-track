@@ -22,10 +22,10 @@
 #include <iostream>
 #include <string>
 
-#include "camera_config.h"
-#include "camera_settings.h"
+#include "camera/camera_config.h"
+#include "camera/camera_settings.h"
 #include "ferret_tracker.h"
-#include "logger.h"
+#include "log/logger.h"
 #include "measurement_run.h"
 #include "test_session.h"
 

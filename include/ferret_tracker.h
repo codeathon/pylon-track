@@ -6,7 +6,7 @@
 #include <mutex>
 #include <optional>
 #include <vector>
-#include "camera_calib.h"
+#include "camera/camera_calib.h"
 #include "tracker.h"
 
 // Camera / optics constants for a2A1920-160umPRO at 1.2m with 4mm lens

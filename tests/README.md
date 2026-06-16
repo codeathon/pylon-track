@@ -53,11 +53,11 @@ All commands below assume **`cd build`** — paths to specs use `../tests/...`.
 
 ```bash
 cd build
-export PYLON_CAMERA_CONFIG=../src/camera_config.json   # optional; default is build/bin/camera_config.json
+export PYLON_CAMERA_CONFIG=../src/camera/camera_config.json   # optional; default is build/bin/camera_config.json
 ```
 
 After `make`, `camera_config.json` is copied to `build/bin/`. Edit either that
-file or `src/camera_config.json` (re-copy or symlink if you prefer the src copy).
+file or `src/camera/camera_config.json` (re-copy or symlink if you prefer the src copy).
 
 ### 3. Recommended full calibration run
 
@@ -164,7 +164,7 @@ test_mount_height    --height-cm <cm> [--duration <s>] [--warmup-secs <s>] [--gs
 
 ### 7. After calibration — production tracker
 
-Copy winning values into `src/camera_config.json` (or `build/bin/camera_config.json`),
+Copy winning values into `src/camera/camera_config.json` (or `build/bin/camera_config.json`),
 then:
 
 ```bash
@@ -195,7 +195,7 @@ Flat-field / vignetting correction is still manual in pylon Viewer — see
 Outputs: `setup_report.json`, one verification PNG, pass/fail on mean gray,
 clipping, and fps vs target.
 
-After a pass, copy the `applied_settings` block into `src/camera_config.json`.
+After a pass, copy the `applied_settings` block into `src/camera/camera_config.json`.
 
 Settings file: [`one_time_settings.json`](one_time_settings.json) — edit the
 `camera` block and `verification` thresholds before running.
@@ -204,7 +204,7 @@ Settings file: [`one_time_settings.json`](one_time_settings.json) — edit the
 
 ## `camera_config.json` fields (production + sweeps)
 
-[`src/camera_config.json`](../src/camera_config.json) is the baseline for all
+[`src/camera/camera_config.json`](../src/camera/camera_config.json) is the baseline for all
 sweeps. Newer fields are optional in older copies (defaults apply).
 
 | Field | Default | Notes |

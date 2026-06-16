@@ -11,7 +11,7 @@
 
 #include <opencv2/opencv.hpp>
 
-#include "logger.h"
+#include "log/logger.h"
 #include "test_session.h"
 
 namespace fs = std::filesystem;
