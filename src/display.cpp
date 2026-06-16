@@ -1,6 +1,6 @@
 #include "display.h"
 #include "ferret_tracker.h"
-#include "logger.h"
+#include "log/logger.h"
 
 #include <chrono>
 #include <cmath>

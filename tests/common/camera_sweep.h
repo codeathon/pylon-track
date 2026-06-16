@@ -4,7 +4,7 @@
 #include <pylon/BaslerUniversalInstantCamera.h>
 #include <string>
 
-#include "camera_settings.h"
+#include "camera/camera_settings.h"
 #include "image_metrics.h"
 
 // Shared capture helpers for test_param_sweep (parameter + resolution modes).

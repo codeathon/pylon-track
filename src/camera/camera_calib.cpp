@@ -1,5 +1,5 @@
-#include "camera_calib.h"
-#include "logger.h"
+#include "camera/camera_calib.h"
+#include "log/logger.h"
 
 #include <cnpy.h>
 #include <cstdint>

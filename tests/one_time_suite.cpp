@@ -17,10 +17,10 @@
 
 #include <nlohmann/json.hpp>
 
-#include "camera_config.h"
-#include "camera_settings.h"
+#include "camera/camera_config.h"
+#include "camera/camera_settings.h"
 #include "camera_sweep.h"
-#include "logger.h"
+#include "log/logger.h"
 #include "test_session.h"
 
 namespace fs = std::filesystem;

@@ -1,5 +1,5 @@
-#include "camera_config.h"
-#include "logger.h"
+#include "camera/camera_config.h"
+#include "log/logger.h"
 
 #include <cmath>
 #include <fstream>
@@ -140,7 +140,7 @@ std::string resolve_camera_config_path(const char* argv0,
 		return beside_exe;
 	}
 
-	const std::string src_relative = "src/camera_config.json";
+	const std::string src_relative = "src/camera/camera_config.json";
 	if (file_exists(src_relative)) {
 		return src_relative;
 	}

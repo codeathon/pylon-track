@@ -24,12 +24,12 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 # ── Sources ───────────────────────────────────────────────────────────────────
 set(SOURCES
 	src/main.cpp
-	src/camera_config.cpp
-	src/camera_calib.cpp
+	src/camera/camera_config.cpp
+	src/camera/camera_calib.cpp
 	src/tracker.cpp
 	src/ferret_tracker.cpp
 	src/display.cpp
-	src/logger.cpp
+	src/log/logger.cpp
 )
 
 # ── Compiler flags ────────────────────────────────────────────────────────────
@@ -85,7 +85,7 @@ endif()
 message(STATUS "OpenCV version : ${OpenCV_VERSION}")
 message(STATUS "OpenCV includes: ${OpenCV_INCLUDE_DIRS}")
 
-# ── cnpy (read src/calibration.py calib.npz; vendored — no FetchContent/git) ──
+# ── cnpy (read src/camera/calibration.py calib.npz; vendored — no FetchContent/git) ──
 find_package(ZLIB REQUIRED)
 add_library(cnpy STATIC third_party/cnpy/cnpy.cpp)
 target_include_directories(cnpy PUBLIC third_party/cnpy)
@@ -150,7 +150,7 @@ if(UNIX)
 
 	# Copy camera config beside the executable for default runtime lookup.
 	configure_file(
-		${CMAKE_SOURCE_DIR}/src/camera_config.json
+		${CMAKE_SOURCE_DIR}/src/camera/camera_config.json
 		${CMAKE_BINARY_DIR}/bin/camera_config.json
 		COPYONLY
 	)

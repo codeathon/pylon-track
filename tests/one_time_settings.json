@@ -5,7 +5,7 @@
 		"Run Flat-Field Correction wizard in pylon Viewer (important with 4 mm wide-angle lens).",
 		"Confirm arena is centered in the AOI; adjust offset_x/offset_y in camera_config.json if needed.",
 		"Tape-measure GSD at the production mount height before locking values.",
-		"After this tool passes, copy the reported camera block into src/camera_config.json."
+		"After this tool passes, copy the reported camera block into src/camera/camera_config.json."
 	],
 	"camera": {
 		"pixel_format": "Mono8",

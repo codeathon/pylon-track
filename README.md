@@ -11,7 +11,7 @@ benchmarks two-object tracking latency, and validates mounting height — see
 ## What it does
 
 1. Opens the first available Basler camera (`CBaslerUniversalInstantCamera`).
-2. Configures mono8 capture, AOI, exposure, gain, and frame rate from [`src/camera_config.json`](src/camera_config.json).
+2. Configures mono8 capture, AOI, exposure, gain, and frame rate from [`src/camera/camera_config.json`](src/camera/camera_config.json).
 3. On each frame (`src/ferret_tracker.cpp`):
    - MOG2 background subtraction (30 s warmup — keep arena empty)
    - Morphological cleanup + contour detection
@@ -32,23 +32,27 @@ Ferret: (450, 320)mm  850mm/s  45deg  |  Prey: (520, 410)mm  120mm/s  90deg  |  
 pylon-track/
 ├── CMakeLists.txt
 ├── include/                  Public headers
-│   ├── camera_config.h
-│   ├── camera_calib.h          Load calib.npz + undistort maps
-│   ├── camera_settings.h
+│   ├── camera/
+│   │   ├── camera_config.h
+│   │   ├── camera_calib.h      Load calib.npz + undistort maps
+│   │   └── camera_settings.h
+│   ├── log/
+│   │   └── logger.h            Global thread-safe logger
 │   ├── display.h
 │   ├── ferret_tracker.h
-│   ├── logger.h                Global thread-safe logger
 │   └── tracker.h
 ├── src/                      Implementation
 │   ├── main.cpp              Entry point, signal handling, stdout loop
-│   ├── camera_config.cpp     Load JSON + apply GenICam settings
-│   ├── camera_calib.cpp      Load calib.npz (cnpy) + build undistort maps
-│   ├── camera_config.json    Camera exposure, gain, AOI, frame rate (edit this)
-│   ├── calibration.py        ChArUco lens calibration → calib.npz
+│   ├── camera/
+│   │   ├── camera_config.cpp Load JSON + apply GenICam settings
+│   │   ├── camera_calib.cpp  Load calib.npz (cnpy) + build undistort maps
+│   │   ├── camera_config.json Camera exposure, gain, AOI, frame rate (edit this)
+│   │   └── calibration.py    ChArUco lens calibration → calib.npz
+│   ├── log/
+│   │   └── logger.cpp
 │   ├── ferret_tracker.cpp    Pylon image handler: BG subtract + track logic
 │   ├── tracker.cpp           Shared Kalman filter helper
-│   ├── display.cpp           Live overlay window (helper thread)
-│   └── logger.cpp
+│   └── display.cpp           Live overlay window (helper thread)
 ├── tests/                    Camera calibration suite (hardware-in-the-loop)
 │   ├── README.md             Full run protocols + Basler calibration notes
 │   ├── common/               Shared: session dirs, CSV writer, image metrics
@@ -65,7 +69,7 @@ pylon-track/
         ├── test_param_sweep    Calibration: parameter + preset sweeps
         ├── test_latency        Calibration: two-object latency benchmark
         ├── test_mount_height   Calibration: mounting height validation
-        └── camera_config.json  Copied from src/ at build time
+        └── camera_config.json  Copied from src/camera/ at build time
 ```
 
 Source files still use the `ferret_tracker` name internally; the repo name reflects the **pylon** camera stack.
@@ -154,9 +158,9 @@ cmake -DOpenCV_DIR=/usr/lib/x86_64-linux-gnu/cmake/opencv4 -DPYLON_ROOT=/opt/pyl
 
 Headless mode (default): status messages use the global logger; tracking telemetry prints as **raw** lines (no timestamp prefix) for easy piping.
 
-### Camera configuration (`src/camera_config.json`)
+### Camera configuration (`src/camera/camera_config.json`)
 
-Edit [`src/camera_config.json`](src/camera_config.json) to tune brightness and imaging (no rebuild required — restart the app):
+Edit [`src/camera/camera_config.json`](src/camera/camera_config.json) to tune brightness and imaging (no rebuild required — restart the app):
 
 | Field | Default | Unit / notes |
 |-------|---------|----------------|
@@ -182,19 +186,19 @@ Override config path (first match wins):
 
 ```bash
 ./build/bin/ferret_tracker --camera-config /path/to/camera_config.json
-export PYLON_CAMERA_CONFIG=src/camera_config.json
+export PYLON_CAMERA_CONFIG=src/camera/camera_config.json
 ```
 
-Default lookup: `camera_config.json` next to the executable (`build/bin/`), then `src/camera_config.json` from repo root.
+Default lookup: `camera_config.json` next to the executable (`build/bin/`), then `src/camera/camera_config.json` from repo root.
 
 ### Lens calibration (`calib.npz`)
 
-ChArUco intrinsics from [`src/calibration.py`](src/calibration.py) correct wide-angle distortion before tracking:
+ChArUco intrinsics from [`src/camera/calibration.py`](src/camera/calibration.py) correct wide-angle distortion before tracking:
 
 ```bash
-python src/calibration.py --make-board
-python src/calibration.py --capture      # SPACE saves frames, q quits
-python src/calibration.py --calibrate    # writes calib.npz (repo root)
+python src/camera/calibration.py --make-board
+python src/camera/calibration.py --capture      # SPACE saves frames, q quits
+python src/camera/calibration.py --calibrate    # writes calib.npz (repo root)
 cp calib.npz build/bin/              # or set PYLON_CAMERA_CALIB
 ```
 
@@ -269,7 +273,7 @@ sudo setcap cap_sys_nice+ep build/bin/ferret_tracker
 
 ## Camera and optics assumptions
 
-Camera GenICam settings: [`src/camera_config.json`](src/camera_config.json). Tracker constants in `include/ferret_tracker.h`:
+Camera GenICam settings: [`src/camera/camera_config.json`](src/camera/camera_config.json). Tracker constants in `include/ferret_tracker.h`:
 
 | Constant | Value | Meaning |
 |----------|-------|---------|

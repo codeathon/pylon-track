@@ -34,6 +34,6 @@ struct CameraSettings {
 // Load camera settings from JSON; returns false and logs on failure.
 bool load_camera_config(const std::string& path, CameraSettings& out);
 
-// Resolve config path: CLI > env > next to executable > src/camera_config.json.
+// Resolve config path: CLI > env > next to executable > src/camera/camera_config.json.
 std::string resolve_camera_config_path(const char* argv0,
 	const std::string& cli_path);

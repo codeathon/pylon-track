@@ -2,7 +2,7 @@
 
 #include <pylon/PylonIncludes.h>
 #include <pylon/BaslerUniversalInstantCamera.h>
-#include "camera_settings.h"
+#include "camera/camera_settings.h"
 
 using namespace Basler_UniversalCameraParams;
 using namespace Pylon;

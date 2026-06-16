@@ -1,5 +1,5 @@
 #include "ferret_tracker.h"
-#include "logger.h"
+#include "log/logger.h"
 #include <cmath>
 #include <chrono>
 #include <algorithm>

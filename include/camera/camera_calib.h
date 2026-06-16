@@ -10,7 +10,7 @@ enum class CalibModel : int {
 	Fisheye = 1,   // cv::fisheye::calibrate — better for 4 mm ~79° lens
 };
 
-// Intrinsics + precomputed undistort maps loaded from src/calibration.py calib.npz.
+// Intrinsics + precomputed undistort maps loaded from src/camera/calibration.py calib.npz.
 struct CameraCalib {
 	CalibModel model = CalibModel::Standard;
 	cv::Mat camera_matrix;   // 3×3 CV_64F
