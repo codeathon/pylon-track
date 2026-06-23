@@ -7,6 +7,7 @@
 # never open a display window.
 set(CALIB_PROD_SOURCES
 	${CMAKE_SOURCE_DIR}/src/camera/camera_config.cpp
+	${CMAKE_SOURCE_DIR}/src/camera/camera_calib.cpp
 	${CMAKE_SOURCE_DIR}/src/tracker/tracker.cpp
 	${CMAKE_SOURCE_DIR}/src/tracker/ferret_tracker.cpp
 	${CMAKE_SOURCE_DIR}/src/log/logger.cpp
@@ -17,6 +18,7 @@ set(CALIB_COMMON_SOURCES
 	common/image_metrics.cpp
 	common/measurement_run.cpp
 	common/camera_sweep.cpp
+	common/telemetry_run.cpp
 )
 
 # Shared static lib so the production .cpp files compile once, not 3x.
@@ -35,18 +37,22 @@ target_link_libraries(calib_common PUBLIC
 	${PYLON_LINK_FLAGS}
 	${OpenCV_LIBS}
 	nlohmann_json::nlohmann_json
+	cnpy
+	ZLIB::ZLIB
 	pthread
 )
 
 # One executable per suite -> build/bin/.
 # param_sweep handles both single-parameter and resolution-preset specs.
-foreach(suite param_sweep latency_suite mount_height_suite one_time_suite)
+foreach(suite param_sweep latency_suite mount_height_suite one_time_suite telemetry_suite)
 	if(suite STREQUAL "param_sweep")
 		set(exe_name test_param_sweep)
 	elseif(suite STREQUAL "latency_suite")
 		set(exe_name test_latency)
 	elseif(suite STREQUAL "one_time_suite")
 		set(exe_name test_one_time_setup)
+	elseif(suite STREQUAL "telemetry_suite")
+		set(exe_name test_telemetry)
 	else()
 		set(exe_name test_mount_height)
 	endif()
