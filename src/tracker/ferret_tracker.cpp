@@ -136,6 +136,18 @@ void FerretTracker::OnImageGrabbed(Pylon::CInstantCamera&,
 		std::ostringstream oss;
 		oss << "OnImageGrabbed " << dt_us << " us";
 		log_debug("tracker", oss.str());
+
+		// Log speed and distance ~1 Hz when both tracks are valid.
+		if (ferret.valid && prey.valid) {
+			float dx = ferret.pos_mm.x - prey.pos_mm.x;
+			float dy = ferret.pos_mm.y - prey.pos_mm.y;
+			float dist_mm = std::sqrt(dx * dx + dy * dy);
+			std::ostringstream koss;
+			koss << "ferret_speed=" << static_cast<int>(ferret.speed_mm_s)
+			     << "mm/s  prey_speed=" << static_cast<int>(prey.speed_mm_s)
+			     << "mm/s  distance=" << static_cast<int>(dist_mm) << "mm";
+			log_info("tracker", koss.str());
+		}
 	}
 }
 
