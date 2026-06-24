@@ -8,6 +8,7 @@ charuco_board.png
 __pycache__/
 # Calibration suite captures (images + CSVs, can be large)
 tests/output/
+sessions/
 *.o
 *.a
 *.so

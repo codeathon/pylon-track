@@ -8,15 +8,21 @@
 #include <cstring>
 #include <exception>
 #include <string>
+#include <filesystem>
+#include <cmath>
 
 #include "camera/camera_config.h"
 #include "camera/camera_settings.h"
 #include "camera/camera_calib.h"
+#include "experiment/arena_config.h"
+#include "experiment/session_recorder.h"
+#include "experiment/trial_state.h"
 #include "tracker/ferret_tracker.h"
 #include "tracker/display.h"
 #include "log/logger.h"
 
 using namespace Pylon;
+namespace fs = std::filesystem;
 
 static std::atomic<bool> g_running{true};
 
@@ -29,6 +35,8 @@ struct AppOptions {
 	std::string camera_config;
 	std::string calib_path;
 	bool disable_calib = false;
+	std::string experiment_config;
+	std::string session_dir = "sessions";
 };
 
 static bool parse_args(int argc, char** argv, AppOptions& opts) {
@@ -57,6 +65,18 @@ static bool parse_args(int argc, char** argv, AppOptions& opts) {
 			opts.calib_path = argv[++i];
 		} else if (std::strcmp(argv[i], "--no-calib") == 0) {
 			opts.disable_calib = true;
+		} else if (std::strcmp(argv[i], "--experiment") == 0) {
+			if (i + 1 >= argc) {
+				std::cerr << "ERROR: --experiment requires a path argument\n";
+				return false;
+			}
+			opts.experiment_config = argv[++i];
+		} else if (std::strcmp(argv[i], "--session") == 0) {
+			if (i + 1 >= argc) {
+				std::cerr << "ERROR: --session requires a path argument\n";
+				return false;
+			}
+			opts.session_dir = argv[++i];
 		} else {
 			std::cerr << "ERROR: Unknown argument: " << argv[i] << '\n';
 			return false;
@@ -74,9 +94,70 @@ static void init_logger(const AppOptions& opts) {
 	}
 }
 
+static int64_t host_time_ns() {
+	return std::chrono::duration_cast<std::chrono::nanoseconds>(
+		std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+// Resolve arena_experiment.json beside the executable or under config/.
+static std::string resolve_experiment_config_path(const char* argv0,
+	const std::string& user_path)
+{
+	if (!user_path.empty()) {
+		return user_path;
+	}
+	const fs::path exe_dir = fs::path(argv0).parent_path();
+	const fs::path candidates[] = {
+		exe_dir / "arena_experiment.json",
+		exe_dir / "config" / "arena_experiment.json",
+		fs::path("config") / "arena_experiment.json",
+	};
+	for (const auto& path : candidates) {
+		if (fs::exists(path)) {
+			return path.string();
+		}
+	}
+	return {};
+}
+
+static void operator_input_thread(TrialStateMachine* fsm, SessionRecorder* recorder) {
+	while (g_running.load()) {
+		char key = 0;
+		if (!(std::cin >> key)) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(50));
+			continue;
+		}
+		const int64_t ts = host_time_ns();
+		if (key == 's') {
+			if (fsm->start_trial()) {
+				log_info("experiment", "Trial started (Running)");
+				if (recorder && recorder->is_open()) {
+					recorder->log_event("trial_start", ts, fsm->phase());
+				}
+			} else {
+				log_info("experiment",
+					"Cannot start trial — wait for Armed (warmup complete), then press s");
+			}
+		} else if (key == 'e') {
+			if (fsm->end_trial()) {
+				log_info("experiment", "Trial ended");
+				if (recorder && recorder->is_open()) {
+					recorder->log_event("trial_end", ts, fsm->phase());
+				}
+			}
+		} else if (key == 'r') {
+			if (fsm->reset_trial()) {
+				log_info("experiment", "Trial reset — Armed, ready for next start");
+				if (recorder && recorder->is_open()) {
+					recorder->log_event("trial_reset", ts, fsm->phase());
+				}
+			}
+		}
+	}
+}
+
 int main(int argc, char** argv) {
 	AppOptions opts;
-	// Logger uses default Info until init_logger runs after arg parse.
 	if (!parse_args(argc, argv, opts)) {
 		return 1;
 	}
@@ -88,6 +169,36 @@ int main(int argc, char** argv) {
 	if (opts.enable_display && std::getenv("DISPLAY") == nullptr) {
 		log_error("main", "--display requires a graphical session (DISPLAY is unset)");
 		return 1;
+	}
+
+	const bool experiment_mode = !opts.experiment_config.empty();
+
+	ArenaExperimentConfig arena_cfg;
+	SessionRecorder session_recorder;
+	TrialStateMachine trial_fsm;
+	std::thread operator_thread;
+
+	if (experiment_mode) {
+		const std::string cfg_path = resolve_experiment_config_path(
+			argv[0], opts.experiment_config);
+		if (cfg_path.empty()) {
+			log_error("experiment",
+				"No arena config found — pass --experiment <path> or add config/arena_experiment.json");
+			return 1;
+		}
+		if (!load_arena_experiment_config(cfg_path, arena_cfg)) {
+			return 1;
+		}
+		try {
+			session_recorder.open_session(opts.session_dir, "arena_experiment");
+		} catch (const std::exception& e) {
+			log_error("experiment", std::string("Session recorder failed: ") + e.what());
+			return 1;
+		}
+		trial_fsm.begin_warmup();
+		operator_thread = std::thread(operator_input_thread, &trial_fsm, &session_recorder);
+		log_info("experiment",
+			"Experiment mode — warmup 30s, then s=start e=end r=reset");
 	}
 
 	PylonInitialize();
@@ -142,6 +253,9 @@ int main(int argc, char** argv) {
 		}
 
 		FerretTracker tracker(opts.enable_display, WARMUP_FRAMES, GSD_MM_PX, calib);
+		if (experiment_mode) {
+			tracker.set_experiment_hooks(&trial_fsm, &session_recorder);
+		}
 		camera.RegisterImageEventHandler(&tracker,
 			RegistrationMode_Append, Cleanup_None);
 
@@ -154,15 +268,28 @@ int main(int argc, char** argv) {
 		camera.StartGrabbing(GrabStrategy_LatestImageOnly,
 			GrabLoop_ProvidedByInstantCamera);
 
+		TrialPhase last_phase = TrialPhase::Idle;
 		while (g_running.load()) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
-			if (!tracker.ferret.valid || !tracker.prey.valid) continue;
+			if (experiment_mode) {
+				const TrialPhase phase = trial_fsm.phase();
+				if (phase != last_phase) {
+					log_info("experiment",
+						std::string("Phase: ") + trial_phase_name(phase));
+					last_phase = phase;
+				}
+				continue;
+			}
+
+			if (!tracker.ferret.valid || !tracker.prey.valid) {
+				continue;
+			}
 
 			// Telemetry: raw stdout without logger prefix for piping/scripts.
-			float dx = tracker.ferret.pos_mm.x - tracker.prey.pos_mm.x;
-			float dy = tracker.ferret.pos_mm.y - tracker.prey.pos_mm.y;
-			float distance_mm = std::sqrt(dx * dx + dy * dy);
+			const float dx = tracker.ferret.pos_mm.x - tracker.prey.pos_mm.x;
+			const float dy = tracker.ferret.pos_mm.y - tracker.prey.pos_mm.y;
+			const float distance_mm = std::sqrt(dx * dx + dy * dy);
 
 			std::printf(
 				"Ferret: (%.0f, %.0f)mm  %.0fmm/s  %.0fdeg  |  "
@@ -191,6 +318,11 @@ int main(int argc, char** argv) {
 		log_error("main", std::string("Pylon error: ") + e.GetDescription());
 		PylonTerminate();
 		return 1;
+	}
+
+	g_running.store(false);
+	if (operator_thread.joinable()) {
+		operator_thread.join();
 	}
 
 	PylonTerminate();

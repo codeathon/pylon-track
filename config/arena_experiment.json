@@ -1,0 +1,12 @@
+{
+	"chase_policy": {
+		"min_chain_speed_mps": 0.05,
+		"max_chain_speed_mps": 0.8,
+		"cone_half_angle_deg": 45.0,
+		"threat_distance_mm": 800.0,
+		"creep_distance_mm": 2000.0
+	},
+	"trial": {
+		"timeout_s": 120.0
+	}
+}

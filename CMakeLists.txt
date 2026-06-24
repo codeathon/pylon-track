@@ -30,6 +30,12 @@ set(SOURCES
 	src/tracker/ferret_tracker.cpp
 	src/tracker/display.cpp
 	src/log/logger.cpp
+	src/experiment/trial_state.cpp
+	src/experiment/arena_config.cpp
+	src/experiment/session_recorder.cpp
+	src/vision/camera_frame.cpp
+	src/vision/tracking_frame.cpp
+	src/vision/tracking_pipeline.cpp
 )
 
 # ── Compiler flags ────────────────────────────────────────────────────────────
@@ -158,6 +164,16 @@ if(UNIX)
 		DEPENDS ${CMAKE_BINARY_DIR}/bin/camera_config.json
 	)
 	add_dependencies(ferret_tracker copy_camera_config)
+
+	configure_file(
+		${CMAKE_SOURCE_DIR}/config/arena_experiment.json
+		${CMAKE_BINARY_DIR}/bin/config/arena_experiment.json
+		COPYONLY
+	)
+	add_custom_target(copy_arena_config ALL
+		DEPENDS ${CMAKE_BINARY_DIR}/bin/config/arena_experiment.json
+	)
+	add_dependencies(ferret_tracker copy_arena_config)
 
 	# RPATH: embed pylon lib path so the binary runs without LD_LIBRARY_PATH
 	set_target_properties(ferret_tracker PROPERTIES
