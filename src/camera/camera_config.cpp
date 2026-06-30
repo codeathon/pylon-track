@@ -1,0 +1,298 @@
+#include "camera/camera_config.h"
+#include "log/logger.h"
+
+#include <cmath>
+#include <fstream>
+#include <nlohmann/json.hpp>
+#include <sstream>
+#include <unistd.h>
+#include <filesystem>
+
+namespace fs = std::filesystem;
+
+namespace {
+
+bool file_exists(const std::string& path) {
+	return !path.empty() && fs::is_regular_file(path);
+}
+
+std::string exe_directory(const char* argv0) {
+	if (argv0 == nullptr || argv0[0] == '\0') {
+		return {};
+	}
+	std::error_code ec;
+	const fs::path exe = fs::weakly_canonical(fs::path(argv0), ec);
+	if (ec) {
+		return {};
+	}
+	return exe.parent_path().string();
+}
+
+template<typename T>
+T require_field(const nlohmann::json& j, const char* key) {
+	if (!j.contains(key)) {
+		throw std::runtime_error(std::string("Missing required field: ") + key);
+	}
+	return j.at(key).get<T>();
+}
+
+// Optional GenICam nodes vary by camera model / pylon build — never hard-fail
+// production unless the caller marks the feature required (core AOI/exposure).
+template<typename FeatureT, typename ValueT>
+void set_if_writable(FeatureT& feature, const ValueT& value, const char* name,
+	bool required = false)
+{
+	try {
+		if (!feature.IsWritable()) {
+			if (required) {
+				throw std::runtime_error(std::string(name) + " is not writable");
+			}
+			log_debug("camera", std::string("Skipping ") + name + " (not writable)");
+			return;
+		}
+		feature.SetValue(value);
+	} catch (const GenICam::GenericException& e) {
+		if (required) {
+			throw std::runtime_error(std::string(name) + ": " + e.GetDescription());
+		}
+		log_warn("camera", std::string("Skipping ") + name + ": "
+			+ e.GetDescription());
+	} catch (const Pylon::GenericException& e) {
+		if (required) {
+			throw std::runtime_error(std::string(name) + ": " + e.GetDescription());
+		}
+		log_warn("camera", std::string("Skipping ") + name + ": "
+			+ e.GetDescription());
+	}
+}
+
+void apply_binning_selector(CBaslerUniversalInstantCamera& cam,
+	const std::string& selector)
+{
+	if (selector == "FPGA" || selector == "Region1") {
+		set_if_writable(cam.BinningSelector, BinningSelector_Region1,
+			"BinningSelector");
+	} else if (selector == "Sensor") {
+		set_if_writable(cam.BinningSelector, BinningSelector_Sensor,
+			"BinningSelector");
+	} else {
+		throw std::runtime_error("Unsupported binning_selector: " + selector);
+	}
+}
+
+void apply_exposure_time_mode(CBaslerUniversalInstantCamera& cam,
+	const std::string& mode, bool required = false)
+{
+	if (mode == "Common" || mode == "Standard") {
+		set_if_writable(cam.BslExposureTimeMode, BslExposureTimeMode_Standard,
+			"BslExposureTimeMode", required);
+	} else if (mode == "UltraShort") {
+		set_if_writable(cam.BslExposureTimeMode, BslExposureTimeMode_UltraShort,
+			"BslExposureTimeMode", true);
+	} else {
+		throw std::runtime_error("Unsupported exposure_time_mode: " + mode);
+	}
+}
+
+void apply_throughput_limit(CBaslerUniversalInstantCamera& cam,
+	const CameraSettings& s)
+{
+	if (s.device_link_throughput_limit == "Off") {
+		set_if_writable(cam.DeviceLinkThroughputLimitMode,
+			DeviceLinkThroughputLimitMode_Off,
+			"DeviceLinkThroughputLimitMode", true);
+		return;
+	}
+	if (s.device_link_throughput_limit != "On") {
+		throw std::runtime_error(
+			"Unsupported device_link_throughput_limit: "
+			+ s.device_link_throughput_limit);
+	}
+	if (s.device_link_throughput_mbps <= 0.0) {
+		throw std::runtime_error(
+			"device_link_throughput_mbps required when throughput limit is On");
+	}
+	const int64_t bytes_per_s = static_cast<int64_t>(
+		s.device_link_throughput_mbps * 1e6 / 8.0);
+	set_if_writable(cam.DeviceLinkThroughputLimitMode,
+		DeviceLinkThroughputLimitMode_On,
+		"DeviceLinkThroughputLimitMode", true);
+	set_if_writable(cam.DeviceLinkThroughputLimit, bytes_per_s,
+		"DeviceLinkThroughputLimit", true);
+}
+
+} // namespace
+
+std::string resolve_camera_config_path(const char* argv0,
+	const std::string& cli_path)
+{
+	if (!cli_path.empty()) {
+		return cli_path;
+	}
+
+	const char* env_path = std::getenv("PYLON_CAMERA_CONFIG");
+	if (env_path != nullptr && env_path[0] != '\0') {
+		return env_path;
+	}
+
+	const std::string beside_exe = exe_directory(argv0) + "/camera_config.json";
+	if (file_exists(beside_exe)) {
+		return beside_exe;
+	}
+
+	const std::string src_relative = "src/camera/camera_config.json";
+	if (file_exists(src_relative)) {
+		return src_relative;
+	}
+
+	if (file_exists("bin/camera_config.json")) {
+		return "bin/camera_config.json";
+	}
+
+	return src_relative;
+}
+
+bool load_camera_config(const std::string& path, CameraSettings& out) {
+	std::ifstream file(path);
+	if (!file.is_open()) {
+		log_error("camera", "Cannot open camera config: " + path);
+		return false;
+	}
+
+	nlohmann::json j;
+	try {
+		file >> j;
+	} catch (const nlohmann::json::exception& e) {
+		log_error("camera", std::string("JSON parse error in ") + path + ": " + e.what());
+		return false;
+	}
+
+	try {
+		out.pixel_format = require_field<std::string>(j, "pixel_format");
+		out.width = require_field<int>(j, "width");
+		out.height = require_field<int>(j, "height");
+		out.offset_x = require_field<int>(j, "offset_x");
+		out.offset_y = require_field<int>(j, "offset_y");
+		out.exposure_auto = require_field<bool>(j, "exposure_auto");
+		out.exposure_time_us = require_field<double>(j, "exposure_time_us");
+		out.gain_auto = require_field<bool>(j, "gain_auto");
+		out.gain_db = require_field<double>(j, "gain_db");
+		out.frame_rate_enable = require_field<bool>(j, "frame_rate_enable");
+		out.frame_rate_fps = require_field<double>(j, "frame_rate_fps");
+		out.trigger_mode = require_field<std::string>(j, "trigger_mode");
+		out.device_link_throughput_limit =
+			require_field<std::string>(j, "device_link_throughput_limit");
+		out.exposure_time_mode = j.value("exposure_time_mode", "Standard");
+		out.device_link_throughput_mbps =
+			j.value("device_link_throughput_mbps", 0.0);
+		out.black_level = j.value("black_level", 0);
+		out.gamma = j.value("gamma", 1.0);
+		out.binning_horizontal = j.value("binning_horizontal", 1);
+		out.binning_vertical = j.value("binning_vertical", 1);
+		out.binning_selector = j.value("binning_selector", "Sensor");
+		out.scaling_horizontal = j.value("scaling_horizontal", 1.0);
+		out.reverse_x = j.value("reverse_x", false);
+		out.reverse_y = j.value("reverse_y", false);
+	} catch (const std::exception& e) {
+		log_error("camera", std::string("Invalid camera config in ") + path + ": " + e.what());
+		return false;
+	}
+
+	return true;
+}
+
+void configure_camera(CBaslerUniversalInstantCamera& cam, const CameraSettings& s) {
+	cam.Open();
+
+	if (s.pixel_format != "Mono8") {
+		throw std::runtime_error("Unsupported pixel_format: " + s.pixel_format + " (only Mono8)");
+	}
+	set_if_writable(cam.PixelFormat, PixelFormat_Mono8, "PixelFormat", true);
+
+	const bool use_binning = s.binning_horizontal > 1 || s.binning_vertical > 1;
+	const bool use_scaling = s.scaling_horizontal > 0.0
+		&& s.scaling_horizontal < 1.0 - 1e-6;
+
+	// Only touch binning/scaling when non-default — avoids optional nodes that
+	// may be absent on some firmware/pylon builds (CFloatParameter not found).
+	if (use_binning) {
+		apply_binning_selector(cam, s.binning_selector);
+		set_if_writable(cam.BinningHorizontal, s.binning_horizontal,
+			"BinningHorizontal", true);
+		set_if_writable(cam.BinningVertical, s.binning_vertical,
+			"BinningVertical", true);
+	} else if (use_scaling) {
+		set_if_writable(cam.BinningHorizontal, 1, "BinningHorizontal");
+		set_if_writable(cam.BinningVertical, 1, "BinningVertical");
+		set_if_writable(cam.ScalingHorizontal, s.scaling_horizontal,
+			"ScalingHorizontal", true);
+	}
+
+	set_if_writable(cam.Width, s.width, "Width", true);
+	set_if_writable(cam.Height, s.height, "Height", true);
+	set_if_writable(cam.OffsetX, s.offset_x, "OffsetX", true);
+	set_if_writable(cam.OffsetY, s.offset_y, "OffsetY", true);
+
+	if (s.reverse_x) {
+		set_if_writable(cam.ReverseX, true, "ReverseX");
+	}
+	if (s.reverse_y) {
+		set_if_writable(cam.ReverseY, true, "ReverseY");
+	}
+
+	if (s.black_level != 0) {
+		set_if_writable(cam.BlackLevel, s.black_level, "BlackLevel");
+	}
+
+	if (std::abs(s.gamma - 1.0) > 1e-6) {
+		set_if_writable(cam.Gamma, s.gamma, "Gamma");
+	}
+
+	if (s.exposure_time_mode == "UltraShort") {
+		apply_exposure_time_mode(cam, s.exposure_time_mode, true);
+	} else if (s.exposure_time_mode != "Standard" && s.exposure_time_mode != "Common") {
+		apply_exposure_time_mode(cam, s.exposure_time_mode, true);
+	}
+
+	set_if_writable(cam.ExposureAuto,
+		s.exposure_auto ? ExposureAuto_Continuous : ExposureAuto_Off,
+		"ExposureAuto", true);
+	if (!s.exposure_auto) {
+		set_if_writable(cam.ExposureTime, s.exposure_time_us, "ExposureTime", true);
+	}
+
+	set_if_writable(cam.GainAuto,
+		s.gain_auto ? GainAuto_Continuous : GainAuto_Off,
+		"GainAuto", true);
+	if (!s.gain_auto) {
+		set_if_writable(cam.Gain, s.gain_db, "Gain", true);
+	}
+
+	set_if_writable(cam.AcquisitionFrameRateEnable, s.frame_rate_enable,
+		"AcquisitionFrameRateEnable", true);
+	if (s.frame_rate_enable) {
+		set_if_writable(cam.AcquisitionFrameRate, s.frame_rate_fps,
+			"AcquisitionFrameRate", true);
+	}
+
+	if (s.trigger_mode == "Off") {
+		set_if_writable(cam.TriggerMode, TriggerMode_Off, "TriggerMode", true);
+	} else {
+		throw std::runtime_error("Unsupported trigger_mode: " + s.trigger_mode);
+	}
+
+	apply_throughput_limit(cam, s);
+
+	std::ostringstream oss;
+	oss << "Applied " << s.pixel_format << " " << s.width << "x" << s.height
+		<< " offset=(" << s.offset_x << "," << s.offset_y << ")"
+		<< " binning=" << s.binning_horizontal << "x" << s.binning_vertical
+		<< "(" << s.binning_selector << ")"
+		<< " scale=" << s.scaling_horizontal
+		<< " exposure_mode=" << s.exposure_time_mode
+		<< " exposure=" << s.exposure_time_us << "us"
+		<< " gain=" << s.gain_db << "dB"
+		<< " black=" << s.black_level << " gamma=" << s.gamma
+		<< " fps=" << s.frame_rate_fps;
+	log_info("camera", oss.str());
+}

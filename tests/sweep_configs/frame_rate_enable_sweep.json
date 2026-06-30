@@ -1,0 +1,6 @@
+{
+	"parameter": "frame_rate_enable",
+	"values": [true, false],
+	"frames_per_value": 100,
+	"save_images": 2
+}

@@ -1,0 +1,52 @@
+{
+	"preset_type": "camera",
+	"frames_per_preset": 50,
+	"save_images": 3,
+	"presets": [
+		{
+			"label": "common_500us",
+			"exposure_time_mode": "Common",
+			"exposure_time_us": 500
+		},
+		{
+			"label": "common_250us",
+			"exposure_time_mode": "Common",
+			"exposure_time_us": 250
+		},
+		{
+			"label": "common_100us",
+			"exposure_time_mode": "Common",
+			"exposure_time_us": 100
+		},
+		{
+			"label": "common_50us",
+			"exposure_time_mode": "Common",
+			"exposure_time_us": 50
+		},
+		{
+			"label": "ultra_14us",
+			"exposure_time_mode": "UltraShort",
+			"exposure_time_us": 14
+		},
+		{
+			"label": "ultra_10us",
+			"exposure_time_mode": "UltraShort",
+			"exposure_time_us": 10
+		},
+		{
+			"label": "ultra_5us",
+			"exposure_time_mode": "UltraShort",
+			"exposure_time_us": 5
+		},
+		{
+			"label": "ultra_2us",
+			"exposure_time_mode": "UltraShort",
+			"exposure_time_us": 2
+		},
+		{
+			"label": "ultra_1us",
+			"exposure_time_mode": "UltraShort",
+			"exposure_time_us": 1
+		}
+	]
+}

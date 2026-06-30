@@ -1,0 +1,6 @@
+{
+	"parameter": "exposure_time_us",
+	"values": [19, 50, 100, 250, 500, 1000, 1500, 2000, 3000, 4000, 5000],
+	"frames_per_value": 50,
+	"save_images": 3
+}
