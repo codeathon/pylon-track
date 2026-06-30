@@ -30,6 +30,7 @@ set(SOURCES
 	src/tracker/ferret_tracker.cpp
 	src/tracker/display.cpp
 	src/log/logger.cpp
+	src/motor/odrive.cpp
 )
 
 # ── Compiler flags ────────────────────────────────────────────────────────────
