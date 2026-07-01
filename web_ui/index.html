@@ -1,0 +1,1238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>pylon-track · Control Panel</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0d0f14;
+      --surface:  #161b24;
+      --border:   #252d3d;
+      --accent:   #3b82f6;
+      --accent2:  #10b981;
+      --warn:     #f59e0b;
+      --danger:   #ef4444;
+      --text:     #e2e8f0;
+      --muted:    #64748b;
+      --radius:   10px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    header .logo {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+    header .logo span { color: var(--accent); }
+    .badge {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-weight: 600;
+    }
+    .badge.live   { background: #052e16; color: #4ade80; border: 1px solid #166534; }
+    .badge.proto  { background: #1c1917; color: var(--warn); border: 1px solid #78350f; }
+    header .spacer { flex: 1; }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #4ade80;
+      box-shadow: 0 0 6px #4ade80;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+    /* ── Layout ── */
+    main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      grid-template-rows: 1fr;
+      gap: 16px;
+      padding: 16px 20px;
+      min-height: 0;
+    }
+
+    /* Right sidebar scrolls independently */
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      overflow-y: auto;
+      min-height: 0;
+    }
+
+    /* ── Card ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .6px;
+      color: var(--muted);
+    }
+    .card-header .icon { font-size: 15px; }
+    .card-body { padding: 14px; }
+
+    /* ── Camera column (left grid cell) ── */
+    .camera-col {
+      grid-column: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      min-height: 0;
+    }
+    .camera-card {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .camera-card .card-body {
+      flex: 1;
+      padding: 0;
+      background: #000;
+      position: relative;
+      overflow: hidden;
+      min-height: 0;
+    }
+    .camera-card img {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      object-position: top center;
+      display: block;
+    }
+    .camera-overlay {
+      position: absolute;
+      top: 10px; left: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      pointer-events: none;
+    }
+    .overlay-tag {
+      background: rgba(0,0,0,.6);
+      backdrop-filter: blur(4px);
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 5px;
+      padding: 3px 8px;
+      font-size: 11px;
+      color: #cbd5e1;
+      font-variant-numeric: tabular-nums;
+    }
+    .overlay-tag.green { color: #4ade80; }
+
+    /* sidebar cards just stack in the flex column */
+
+    /* ── DAC channel row ── */
+    .dac-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .dac-row:last-child { border-bottom: none; }
+    .dac-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .led {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #1e2533;
+      border: 1px solid var(--border);
+      flex-shrink: 0;
+      transition: background .2s, box-shadow .2s;
+    }
+    .led.on {
+      background: #4ade80;
+      border-color: #4ade80;
+      box-shadow: 0 0 8px #4ade80;
+    }
+    .dac-name {
+      font-size: 13px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .dac-voltage {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 1px;
+    }
+    .toggle-btn {
+      padding: 5px 16px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .15s;
+    }
+    .toggle-btn.on {
+      background: var(--accent2);
+      border-color: var(--accent2);
+      color: #fff;
+    }
+    .toggle-btn:disabled {
+      opacity: .35;
+      cursor: not-allowed;
+    }
+
+    /* ── ODrive visual controls ── */
+    .od-status-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .od-state {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+    }
+    .state-dot { width: 9px; height: 9px; border-radius: 50%; }
+    .state-dot.idle        { background: var(--muted); }
+    .state-dot.disconnected{ background: var(--muted); }
+    .state-dot.armed       { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
+    .state-dot.running     { background: #4ade80; box-shadow: 0 0 6px #4ade80; animation: pulse 1.5s infinite; }
+    .state-dot.fault       { background: var(--danger); box-shadow: 0 0 6px var(--danger); }
+
+    /* Velocity slider */
+    .vel-slider-wrap { margin-bottom: 14px; }
+    .gauge-label {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      margin-bottom: 6px;
+    }
+    input[type=range] {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 5px;
+      border-radius: 3px;
+      background: #1e2533;
+      outline: none;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+      box-shadow: 0 0 0 3px rgba(59,130,246,.25);
+    }
+    .gauge-value {
+      text-align: right;
+      font-size: 12px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      margin-bottom: 0;
+    }
+
+    /* Action buttons */
+    .od-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 6px;
+    }
+    .btn {
+      padding: 8px 0;
+      border-radius: 6px;
+      border: 1px solid;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: .4px;
+      transition: all .15s;
+    }
+    .btn-primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover { filter: brightness(1.15); }
+    .btn-danger {
+      background: transparent;
+      border-color: var(--danger);
+      color: var(--danger);
+    }
+    .btn-danger:hover { background: rgba(239,68,68,.1); }
+    .btn-neutral {
+      background: transparent;
+      border-color: var(--border);
+      color: var(--muted);
+    }
+    .btn-neutral:hover { border-color: var(--text); color: var(--text); }
+    .btn-estop {
+      grid-column: 1 / -1;
+      background: var(--danger);
+      border-color: var(--danger);
+      color: #fff;
+      padding: 10px 0;
+      font-size: 13px;
+      letter-spacing: 1px;
+    }
+    .btn-estop:hover { filter: brightness(1.2); }
+
+    /* ── Shared config input style ── */
+    .cfg-input {
+      background: #0d0f14;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      padding: 3px 6px;
+      font-size: 12px;
+      text-align: right;
+      outline: none;
+      width: 64px;
+    }
+    .cfg-input:focus { border-color: var(--accent); }
+
+    /* ── Telemetry ── */
+    .telem-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .telem-item {
+      background: #0d0f14;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 10px 12px;
+    }
+    .telem-item .label {
+      font-size: 10px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      margin-bottom: 4px;
+    }
+    .telem-item .value {
+      font-size: 18px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+    }
+    .telem-item .unit {
+      font-size: 11px;
+      color: var(--muted);
+      margin-left: 3px;
+    }
+
+    /* Section divider inside a card */
+    .section-divider {
+      border-top: 1px solid var(--border);
+      margin: 14px 0 10px;
+    }
+    .section-label {
+      font-size: 10px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      margin-bottom: 10px;
+    }
+
+    /* responsive */
+    @media (max-width: 960px) {
+      main { grid-template-columns: 1fr; grid-template-rows: 300px 1fr; }
+      .camera-card { min-height: 300px; }
+      .sidebar { overflow-y: visible; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">pylon<span>-track</span></div>
+  <div class="spacer"></div>
+  <span id="cam-badge"    class="badge proto">📷 Camera · —</span>
+  <span id="od-conn-badge" class="badge proto">⚙ ODrive · —</span>
+  <span id="lj-badge"     class="badge proto">🔌 LabJack · —</span>
+  <span id="log-hdr-badge" style="font-size:11px;color:var(--muted);display:none;margin-left:4px">
+    ⏺ <span id="log-hdr-rows">0</span> rows
+  </span>
+  <div class="status-dot"></div>
+</header>
+
+<main>
+
+  <!-- ── Left column: camera + plot ── -->
+  <div class="camera-col">
+
+    <div class="card camera-card">
+      <div class="card-header">
+        <span class="icon">📷</span> Camera Feed
+      </div>
+      <div class="card-body">
+        <img id="feed" src="/video_feed" alt="camera feed" />
+        <div class="camera-overlay">
+          <div class="overlay-tag green">● LIVE</div>
+          <div class="overlay-tag" id="time-tag">--:--:--</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Velocity plot -->
+    <div class="card" style="flex-shrink:0">
+      <div class="card-header" style="padding:8px 14px">
+        <span class="icon">📈</span> Motor Velocity
+        <span id="plot-vel-label" style="margin-left:auto;font-size:11px;
+              color:var(--muted);font-variant-numeric:tabular-nums"></span>
+      </div>
+      <div class="card-body" style="padding:8px 14px 10px">
+        <canvas id="vel-plot" width="1200" height="80"
+                style="width:100%;height:80px;display:block"></canvas>
+      </div>
+    </div>
+
+  </div><!-- /.camera-col -->
+
+  <div class="sidebar">
+  <!-- ── ODrive panel ── -->
+  <div class="card odrive-card">
+    <div class="card-header">
+      <span class="icon">⚙️</span> ODrive · Motor Controller
+    </div>
+    <div class="card-body">
+
+      <!-- Port connect -->
+      <div style="display:flex;gap:6px;margin-bottom:6px">
+        <select id="od-port"
+                style="flex:1;min-width:0;background:#0d0f14;border:1px solid var(--border);
+                       border-radius:6px;color:var(--text);padding:5px 8px;font-size:12px;
+                       outline:none;cursor:pointer">
+          <option value="">— scan for ports —</option>
+        </select>
+        <button class="btn btn-neutral" style="padding:5px 8px;flex-shrink:0"
+                onclick="scanPorts()" title="Refresh port list">⟳</button>
+      </div>
+      <div style="margin-bottom:6px">
+        <button class="btn btn-primary" id="btn-connect" style="width:100%;padding:8px 0"
+                onclick="odConnect()">Connect</button>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);
+                    margin-bottom:10px;cursor:pointer;user-select:none">
+        <input type="checkbox" id="skip-config" style="accent-color:var(--accent)" />
+        Use existing ODrive config (skip writing control mode &amp; vel limit)
+      </label>
+      <div id="od-error" style="font-size:11px;color:var(--danger);margin-bottom:8px;display:none"></div>
+
+      <!-- State + vel limit row -->
+      <div class="od-status-row">
+        <div class="od-state">
+          <div class="state-dot idle" id="state-dot"></div>
+          <span id="state-label">DISCONNECTED</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:4px">
+          <span style="font-size:11px;color:var(--muted)">limit</span>
+          <input type="number" id="vel-limit-input" class="cfg-input"
+                 value="10" min="0.1" max="200" step="0.5" style="width:52px"
+                 title="Velocity limit (turns/s)" />
+          <span style="font-size:11px;color:var(--muted)">t/s</span>
+          <button onclick="applyVelLimit()"
+                  style="background:transparent;border:1px solid var(--border);
+                         border-radius:4px;color:var(--muted);font-size:10px;
+                         padding:2px 7px;cursor:pointer;font-weight:600"
+                  title="Apply velocity limit">Set</button>
+        </div>
+      </div>
+
+      <!-- Live position display -->
+      <div style="background:#0d0f14;border:1px solid var(--border);border-radius:7px;
+                  padding:10px 14px;margin-bottom:10px">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;
+                    letter-spacing:.5px;margin-bottom:4px">Position</div>
+        <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:10px">
+          <span id="od-position" style="font-size:28px;font-weight:700;
+                font-variant-numeric:tabular-nums;color:var(--text)">—</span>
+          <span style="font-size:12px;color:var(--muted)">turns</span>
+          <span id="od-cycle-pos" style="font-size:12px;color:var(--muted);margin-left:auto">
+            cycle: — / 20
+          </span>
+        </div>
+
+        <!-- Cycle progress bar -->
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;
+                    letter-spacing:.5px;margin-bottom:6px">Cycle Progress</div>
+        <svg id="cycle-bar" viewBox="0 0 300 42" width="100%" height="42"
+             style="display:block;overflow:visible">
+          <rect x="0" y="6" width="300" height="20" rx="4" fill="#1e2533"/>
+          <text x="0" y="40" fill="#64748b" font-size="9">0</text>
+        </svg>
+      </div>
+
+      <!-- Velocity setpoint slider -->
+      <div class="vel-slider-wrap">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span class="gauge-label" style="margin-bottom:0">Target Velocity</span>
+          <span id="vel-mode-badge"
+                style="font-size:10px;padding:2px 7px;border-radius:999px;font-weight:600;
+                       background:#1e2533;color:var(--muted)">PRESET</span>
+        </div>
+        <input type="range" id="vel-slider" min="-10" max="10" step="0.1" value="0"
+               style="opacity:0.55;transition:opacity .2s"
+               oninput="onVelSlider(this.value)" />
+        <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
+          <input type="number" id="vel-input" value="0" step="0.1"
+                 style="width:76px;background:#0d0f14;border:1px solid var(--border);border-radius:6px;
+                        color:var(--text);padding:4px 8px;font-size:13px;outline:none;text-align:right"
+                 oninput="onVelInput(this.value)" />
+          <span style="font-size:12px;color:var(--muted)">turns/s</span>
+        </div>
+      </div>
+
+      <!-- Action buttons -->
+      <div class="od-actions" style="margin-top:10px">
+        <button class="btn btn-neutral" id="btn-arm"    onclick="odArm()">Enable</button>
+        <button class="btn btn-neutral" id="btn-disarm" onclick="odDisarm()">Disable</button>
+        <button class="btn btn-estop"   id="btn-estop"  onclick="odEStop()">⛔ E-STOP (SPACE)</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── LabJack T4 ── -->
+  <div class="card labjack-card">
+    <div class="card-header">
+      <span class="icon">🔌</span> LabJack T4
+    </div>
+    <div class="card-body">
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:6px;font-size:12px">
+          <div class="state-dot idle" id="lj-state-dot"></div>
+          <span id="lj-state-label">DISCONNECTED</span>
+        </div>
+        <button class="btn btn-primary" id="btn-lj-connect" style="padding:5px 14px"
+                onclick="ljConnect()">Connect</button>
+      </div>
+      <div id="lj-error" style="font-size:11px;color:var(--danger);margin-bottom:8px;display:none"></div>
+
+      <!-- Cycle window config -->
+      <div class="section-divider"></div>
+      <div class="section-label">Cycle Windows (turns)</div>
+
+      <div style="display:grid;grid-template-columns:auto 1fr auto 1fr;
+                  align-items:center;gap:5px 8px;margin-bottom:10px;font-size:11px">
+        <span style="color:#f59e0b;font-weight:600">DAC0 OFF</span>
+        <input type="number" id="cfg-d0s" class="cfg-input"
+               step="0.5" min="0" placeholder="15" title="DAC0 OFF start (turns)" />
+        <span style="color:var(--muted);text-align:center">→</span>
+        <input type="number" id="cfg-d0e" class="cfg-input"
+               step="0.5" min="0" placeholder="17" title="DAC0 OFF end (turns)" />
+
+        <span style="color:#ef4444;font-weight:600">DAC1 OFF</span>
+        <input type="number" id="cfg-d1s" class="cfg-input"
+               step="0.5" min="0" placeholder="18" title="DAC1 OFF start (turns)" />
+        <span style="color:var(--muted);text-align:center">→</span>
+        <input type="number" id="cfg-d1e" class="cfg-input"
+               step="0.5" min="0" placeholder="20" title="DAC1 OFF end (turns)" />
+
+        <span style="color:var(--muted);font-weight:600">Cycle</span>
+        <input type="number" id="cfg-cycle" class="cfg-input"
+               step="1" min="1" placeholder="20" title="Total cycle length (turns)" />
+        <span style="color:var(--muted)">turns</span>
+        <span></span>
+      </div>
+
+      <button class="btn btn-primary" onclick="applyDacConfig()"
+              style="width:100%;padding:7px 0;font-size:11px">Apply Windows</button>
+      <div id="dac-apply-msg" style="font-size:11px;margin-top:7px;min-height:16px;text-align:center"></div>
+
+    </div>
+  </div>
+
+  <!-- ── Telemetry ── -->
+  <div class="card telemetry-card">
+    <div class="card-header">
+      <span class="icon">📊</span> Tracker Telemetry
+    </div>
+    <div class="card-body">
+      <div class="telem-grid">
+        <div class="telem-item">
+          <div class="label">Ferret X</div>
+          <div class="value"><span id="t-fx">—</span><span class="unit">mm</span></div>
+        </div>
+        <div class="telem-item">
+          <div class="label">Ferret Y</div>
+          <div class="value"><span id="t-fy">—</span><span class="unit">mm</span></div>
+        </div>
+        <div class="telem-item">
+          <div class="label">Ferret Speed</div>
+          <div class="value"><span id="t-fspd">—</span><span class="unit">mm/s</span></div>
+        </div>
+        <div class="telem-item">
+          <div class="label">Heading</div>
+          <div class="value"><span id="t-fhd">—</span><span class="unit">°</span></div>
+        </div>
+        <div class="telem-item">
+          <div class="label">Prey X</div>
+          <div class="value"><span id="t-px">—</span><span class="unit">mm</span></div>
+        </div>
+        <div class="telem-item">
+          <div class="label">Prey Y</div>
+          <div class="value"><span id="t-py">—</span><span class="unit">mm</span></div>
+        </div>
+        <div class="telem-item" style="grid-column:1/-1">
+          <div class="label">Inter-Animal Distance</div>
+          <div class="value"><span id="t-dist">—</span><span class="unit">mm</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Session ── -->
+  <div class="card logging-card">
+    <div class="card-header">
+      <span class="icon">▶</span> Session
+    </div>
+    <div class="card-body">
+      <input type="text" id="log-filename"
+             placeholder="trial name (blank = auto: trial_YYYYMMDD_HHMMSS.csv)"
+             style="width:100%;background:#0d0f14;border:1px solid var(--border);border-radius:6px;
+                    color:var(--text);padding:6px 10px;font-size:12px;outline:none;margin-bottom:6px" />
+      <textarea id="session-notes" rows="2" placeholder="Notes (optional)"
+                style="width:100%;background:#0d0f14;border:1px solid var(--border);border-radius:6px;
+                       color:var(--text);padding:6px 10px;font-size:12px;outline:none;resize:vertical;
+                       margin-bottom:6px;font-family:inherit"></textarea>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <span style="font-size:11px;color:var(--muted);white-space:nowrap">Auto-stop after</span>
+        <input type="number" id="target-cycles" min="0" step="1" value="0"
+               style="width:52px;background:#0d0f14;border:1px solid var(--border);border-radius:6px;
+                      color:var(--text);padding:4px 8px;font-size:12px;outline:none;text-align:right" />
+        <span style="font-size:11px;color:var(--muted)">cycles (0 = off)</span>
+      </div>
+
+      <!-- idle: single Start button -->
+      <div id="session-idle">
+        <button onclick="sessionStart()"
+                style="width:100%;padding:14px 0;border-radius:8px;border:none;font-size:15px;
+                       font-weight:700;letter-spacing:.5px;cursor:pointer;transition:all .2s;
+                       background:#10b981;color:#fff">
+          ▶ START SESSION
+        </button>
+      </div>
+      <!-- recording / paused: toggle-recording + end session -->
+      <div id="session-active" style="display:none;gap:8px">
+        <button id="btn-session-toggle" onclick="sessionToggleRecording()"
+                style="flex:1;padding:14px 0;border-radius:8px;border:none;font-size:14px;
+                       font-weight:700;letter-spacing:.5px;cursor:pointer;transition:all .2s;
+                       background:#f59e0b;color:#fff">
+          ⏸ STOP RECORDING
+        </button>
+        <button onclick="sessionEnd()"
+                style="flex:0 0 auto;padding:14px 16px;border-radius:8px;border:none;font-size:14px;
+                       font-weight:700;letter-spacing:.5px;cursor:pointer;transition:all .2s;
+                       background:#ef4444;color:#fff">
+          ⏹ END
+        </button>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <div id="log-status-dot" style="width:8px;height:8px;border-radius:50%;
+             background:var(--muted);flex-shrink:0"></div>
+        <span id="log-status-text" style="font-size:12px;color:var(--muted)">Ready</span>
+        <span id="cycle-count" style="font-size:11px;color:var(--accent2);display:none"></span>
+        <a id="btn-download" href="/log/download" download
+           style="display:none;margin-left:auto;font-size:11px;color:var(--accent);
+                  text-decoration:none;border:1px solid var(--accent);border-radius:4px;
+                  padding:2px 8px">↓ CSV</a>
+      </div>
+      <div id="session-error" style="font-size:11px;color:var(--danger);margin-top:6px;display:none"></div>
+    </div>
+  </div>
+
+  </div><!-- /.sidebar -->
+
+</main>
+
+<script>
+  // ── Clock ─────────────────────────────────────────────────────────────────
+  setInterval(() => {
+    document.getElementById('time-tag').textContent =
+      new Date().toTimeString().slice(0, 8);
+  }, 1000);
+
+  // ── API helpers ───────────────────────────────────────────────────────────
+  async function api(path, body) {
+    const opts = body !== undefined
+      ? { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) }
+      : { method: 'GET' };
+    const r = await fetch(path, opts);
+    return r.json();
+  }
+
+  function showError(msg) {
+    const el = document.getElementById('od-error');
+    el.textContent = msg;
+    el.style.display = msg ? 'block' : 'none';
+  }
+
+  // ── Port scanner ──────────────────────────────────────────────────────────
+  async function scanPorts() {
+    const sel = document.getElementById('od-port');
+    sel.innerHTML = '<option value="">scanning…</option>';
+    try {
+      const ports = await api('/odrive/ports');
+      sel.innerHTML = ports.length
+        ? ports.map(p =>
+            `<option value="${p.device}">${p.device} — ${p.description}</option>`
+          ).join('')
+        : '<option value="">No ports found</option>';
+    } catch (_) {
+      sel.innerHTML = '<option value="">Error scanning ports</option>';
+    }
+  }
+  scanPorts();
+
+  // ── Cycle progress bar ────────────────────────────────────────────────────
+  function updateProgressBar(cyclePos, cfg) {
+    const W = 300, H = 20, Y = 6;
+    const ct  = cfg.cycle_turns || 20;
+    const d0s = (cfg.dac0_off_start / ct) * W;
+    const d0e = (cfg.dac0_off_end   / ct) * W;
+    const d1s = (cfg.dac1_off_start / ct) * W;
+    const d1e = (Math.min(cfg.dac1_off_end ?? ct, ct) / ct) * W;
+
+    const needleX = (cyclePos !== null && cyclePos !== undefined)
+      ? Math.max(0, Math.min(W, (cyclePos / ct) * W))
+      : null;
+
+    const tick = (x, label, color) =>
+      `<text x="${x.toFixed(1)}" y="${Y+H+13}" text-anchor="middle"
+             fill="${color}" font-size="9" font-family="monospace">${label}</text>`;
+
+    document.getElementById('cycle-bar').innerHTML = `
+      <rect x="0" y="${Y}" width="${W}" height="${H}" rx="4" fill="#1e2533"/>
+      <rect x="${d0s.toFixed(1)}" y="${Y}" width="${Math.max(0,d0e-d0s).toFixed(1)}"
+            height="${H}" rx="2" fill="#f59e0b" opacity="0.75"/>
+      <rect x="${d1s.toFixed(1)}" y="${Y}" width="${Math.max(0,d1e-d1s).toFixed(1)}"
+            height="${H}" rx="2" fill="#ef4444" opacity="0.75"/>
+      ${tick(0,   '0',                                     '#64748b')}
+      ${tick(d0s, cfg.dac0_off_start.toFixed(0),           '#f59e0b')}
+      ${tick(d0e, cfg.dac0_off_end.toFixed(0),             '#f59e0b')}
+      ${tick(d1s, cfg.dac1_off_start.toFixed(0),           '#ef4444')}
+      ${tick(d1e, (cfg.dac1_off_end ?? ct).toFixed(0),     '#ef4444')}
+      ${tick(W,   ct.toFixed(0),                           '#64748b')}
+      ${needleX !== null ? `
+      <line x1="${needleX.toFixed(1)}" y1="${Y-3}" x2="${needleX.toFixed(1)}" y2="${Y+H+3}"
+            stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+      <circle cx="${needleX.toFixed(1)}" cy="${Y-5}" r="3.5" fill="white"/>
+      ` : ''}
+    `;
+  }
+
+  // initial render before first poll
+  updateProgressBar(null, { cycle_turns:20, dac0_off_start:15, dac0_off_end:17, dac1_off_start:18 });
+
+  // ── Velocity plot ─────────────────────────────────────────────────────────
+  const _velHistory = [];
+  const _PLOT_S = 30;
+
+  function _pushVel(v) {
+    _velHistory.push({ t: Date.now(), v });
+    const cutoff = Date.now() - _PLOT_S * 1000;
+    while (_velHistory.length && _velHistory[0].t < cutoff) _velHistory.shift();
+  }
+
+  function _drawVelPlot() {
+    const canvas = document.getElementById('vel-plot');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    const mid = H / 2;
+    ctx.strokeStyle = '#252d3d';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(W, mid); ctx.stroke();
+    if (_velHistory.length < 2) return;
+    const now  = Date.now();
+    const maxV = Math.max(..._velHistory.map(p => Math.abs(p.v)), 1);
+    const pad  = 8;
+    ctx.strokeStyle = '#3b82f6';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    let first = true;
+    for (const p of _velHistory) {
+      const x = W * (1 - (now - p.t) / (_PLOT_S * 1000));
+      const y = mid - (p.v / maxV) * (mid - pad);
+      first ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      first = false;
+    }
+    ctx.stroke();
+    ctx.fillStyle = '#475569';
+    ctx.font = '18px monospace';
+    ctx.fillText(`+${maxV.toFixed(1)}`, 8, pad + 16);
+    ctx.fillText('0', 8, mid + 8);
+    ctx.fillText(`-${maxV.toFixed(1)}`, 8, H - 4);
+    const lbl = document.getElementById('plot-vel-label');
+    if (lbl) {
+      const v = _velHistory[_velHistory.length - 1].v;
+      lbl.textContent = `${v >= 0 ? '+' : ''}${v.toFixed(2)} t/s`;
+    }
+  }
+
+  // ── ODrive UI state ───────────────────────────────────────────────────────
+  function applyStatus(s) {
+    const dot   = document.getElementById('state-dot');
+    const label = document.getElementById('state-label');
+    const state = s.connected ? s.state : 'DISCONNECTED';
+    dot.className     = 'state-dot ' + state.toLowerCase();
+    label.textContent = state;
+
+    const camBadge = document.getElementById('cam-badge');
+    camBadge.textContent = '📷 Camera · Online';
+    camBadge.style.color = '#4ade80';
+
+    const badge = document.getElementById('od-conn-badge');
+    if (s.connected) {
+      badge.textContent = '⚙ ODrive · ' + s.port;
+      badge.style.color = '#4ade80';
+    } else {
+      badge.textContent = '⚙ ODrive · —';
+      badge.style.color = '';
+    }
+
+    document.getElementById('btn-connect').textContent =
+      s.connected ? 'Disconnect' : 'Connect';
+
+    // position + cycle bar
+    const cfg = s.config || { cycle_turns:20, dac0_off_start:15, dac0_off_end:17, dac1_off_start:18, vel_limit:10 };
+    const pos = s.position ?? null;
+    if (pos !== null) {
+      document.getElementById('od-position').textContent = pos.toFixed(2);
+      const ct = cfg.cycle_turns || 20;
+      const cp = ((pos % ct) + ct) % ct;
+      document.getElementById('od-cycle-pos').textContent =
+        `cycle: ${cp.toFixed(2)} / ${ct.toFixed(0)}`;
+      updateProgressBar(cp, cfg);
+    } else {
+      document.getElementById('od-position').textContent = '—';
+      const ct = cfg.cycle_turns || 20;
+      document.getElementById('od-cycle-pos').textContent = `cycle: — / ${ct.toFixed(0)}`;
+      updateProgressBar(null, cfg);
+    }
+
+    // sync vel limit input from server config
+    const limInput = document.getElementById('vel-limit-input');
+    if (document.activeElement !== limInput) {
+      limInput.value = (cfg.vel_limit || 10).toFixed(1);
+    }
+    // update slider range and clamp value to new range
+    const lim = cfg.vel_limit || 10;
+    const slider = document.getElementById('vel-slider');
+    slider.min = -lim;
+    slider.max =  lim;
+
+    // while recording show actual motor velocity; otherwise show the user's preset
+    const v = sessionState === 'recording' ? (s.velocity ?? 0) : pendingVelocity;
+    const vClamped = Math.max(-lim, Math.min(lim, v));
+    const velInput = document.getElementById('vel-input');
+    if (document.activeElement !== slider) {
+      slider.value = vClamped;
+    }
+    if (document.activeElement !== velInput) {
+      velInput.value = vClamped.toFixed(1);
+    }
+
+    // button states
+    const armed = s.connected && (state === 'ARMED' || state === 'RUNNING');
+    const btnArm    = document.getElementById('btn-arm');
+    const btnDisarm = document.getElementById('btn-disarm');
+    btnArm.className    = armed          ? 'btn btn-primary' : 'btn btn-neutral';
+    btnDisarm.className = !armed && s.connected ? 'btn btn-primary' : 'btn btn-neutral';
+    slider.disabled     = !armed;
+    btnArm.disabled     = !s.connected || armed;
+    btnDisarm.disabled  = !s.connected;
+
+    // populate DAC window inputs exactly once (never overwrite user edits)
+    if (!applyStatus._cfgLoaded) {
+      document.getElementById('cfg-d0s').value   = cfg.dac0_off_start ?? '';
+      document.getElementById('cfg-d0e').value   = cfg.dac0_off_end   ?? '';
+      document.getElementById('cfg-d1s').value   = cfg.dac1_off_start ?? '';
+      document.getElementById('cfg-d1e').value   = cfg.dac1_off_end   ?? '';
+      document.getElementById('cfg-cycle').value = cfg.cycle_turns    ?? '';
+      applyStatus._cfgLoaded = true;
+    }
+
+    _motorArmed = armed;
+    _pushVel(s.velocity ?? 0);
+    _drawVelPlot();
+  }
+  applyStatus._cfgLoaded = false;
+
+  // ── Config — velocity limit ───────────────────────────────────────────────
+  async function applyVelLimit() {
+    const lim = parseFloat(document.getElementById('vel-limit-input').value);
+    if (isNaN(lim) || lim <= 0) return;
+    await api('/config', { vel_limit: lim });
+  }
+
+  // ── Config — DAC windows ──────────────────────────────────────────────────
+  async function applyDacConfig() {
+    const msg  = document.getElementById('dac-apply-msg');
+    const vals = {
+      cycle_turns:    parseFloat(document.getElementById('cfg-cycle').value),
+      dac0_off_start: parseFloat(document.getElementById('cfg-d0s').value),
+      dac0_off_end:   parseFloat(document.getElementById('cfg-d0e').value),
+      dac1_off_start: parseFloat(document.getElementById('cfg-d1s').value),
+      dac1_off_end:   parseFloat(document.getElementById('cfg-d1e').value),
+    };
+    if (Object.values(vals).some(v => isNaN(v))) {
+      msg.textContent  = 'All fields must have valid numbers';
+      msg.style.color  = 'var(--danger)';
+      return;
+    }
+    try {
+      const r = await api('/config', vals);
+      updateProgressBar(null, r.config || vals);
+      msg.textContent = 'Saved!';
+      msg.style.color = 'var(--accent2)';
+      setTimeout(() => { msg.textContent = ''; }, 2000);
+    } catch(_) {
+      msg.textContent = 'Server error — check console';
+      msg.style.color = 'var(--danger)';
+    }
+  }
+
+  // ── ODrive actions ────────────────────────────────────────────────────────
+  async function odConnect() {
+    showError('');
+    const btn  = document.getElementById('btn-connect');
+    const port = document.getElementById('od-port').value;
+    if (!port) { showError('Select a port first'); return; }
+
+    if (btn.textContent === 'Disconnect') {
+      applyStatus(await api('/odrive/disconnect', {}));
+      return;
+    }
+
+    btn.textContent = '...';
+    btn.disabled    = true;
+    const skipConfig = document.getElementById('skip-config').checked;
+    const s = await api('/odrive/connect', { port, skip_config: skipConfig });
+    btn.disabled = false;
+    if (!s.ok) showError('Could not open ' + port + ' — check the port and try again');
+    applyStatus(s);
+  }
+
+  async function odArm() {
+    showError('');
+    const s = await api('/odrive/enable', {});
+    if (!s.ok) showError(s.error ?? 'Arm failed');
+    applyStatus(s);
+  }
+
+  async function odDisarm() {
+    showError('');
+    await api('/odrive/velocity', { velocity: 0 });
+    applyStatus(await api('/odrive/stop', {}));
+  }
+
+  async function odEStop() {
+    showError('');
+    // always end session first (stops motor + logging)
+    if (sessionState !== 'idle') {
+      const r = await api('/session/end', {});
+      applyStatus(r);
+      applyLogStatus(r.log);
+      sessionState = 'idle';
+      updateSessionUI();
+    }
+    applyStatus(await api('/odrive/estop', {}));
+    setTimeout(pollStatus, 3000);
+  }
+
+  // ── Session state ─────────────────────────────────────────────────────────
+  // 'idle' = motor stopped, no file open
+  // 'recording' = motor running, writing rows
+  // 'paused' = motor running, file open but not writing
+  let sessionState    = 'idle';
+  let pendingVelocity = 0;
+
+  function updateSessionUI() {
+    const idle   = document.getElementById('session-idle');
+    const active = document.getElementById('session-active');
+    const toggle = document.getElementById('btn-session-toggle');
+    const badge  = document.getElementById('vel-mode-badge');
+    const slider = document.getElementById('vel-slider');
+
+    if (sessionState === 'recording') {
+      idle.style.display     = 'none';
+      active.style.display   = 'flex';
+      badge.textContent      = 'LIVE';
+      badge.style.background = '#052e16';
+      badge.style.color      = '#4ade80';
+      slider.style.opacity   = '1';
+      toggle.textContent      = '⏸ STOP RECORDING';
+      toggle.style.background = '#f59e0b';
+    } else {
+      // idle or paused — motor is stopped, show PRESET
+      idle.style.display     = sessionState === 'idle' ? '' : 'none';
+      active.style.display   = sessionState === 'idle' ? 'none' : 'flex';
+      badge.textContent      = 'PRESET';
+      badge.style.background = '#1e2533';
+      badge.style.color      = 'var(--muted)';
+      slider.style.opacity   = '0.55';
+      if (sessionState === 'paused') {
+        toggle.textContent      = '▶ RESUME RECORDING';
+        toggle.style.background = '#10b981';
+      }
+    }
+  }
+
+  let _motorArmed = false;
+  let velInflight = false;
+
+  async function _sendVelocity(v) {
+    // Allow velocity in session recording OR when motor is manually armed (no session)
+    if (sessionState !== 'recording' && !(sessionState === 'idle' && _motorArmed)) return;
+    if (velInflight) return;
+    velInflight = true;
+    try {
+      const s = await api('/odrive/velocity', { velocity: v });
+      if (s.ok) applyStatus(s);
+    } finally {
+      velInflight = false;
+    }
+  }
+
+  function onVelSlider(val) {
+    const v = parseFloat(val);
+    pendingVelocity = v;
+    const inp = document.getElementById('vel-input');
+    if (document.activeElement !== inp) inp.value = v.toFixed(1);
+    _sendVelocity(v);
+  }
+
+  function onVelInput(val) {
+    const v = parseFloat(val);
+    if (isNaN(v)) return;
+    const slider  = document.getElementById('vel-slider');
+    const lim     = parseFloat(slider.max) || 10;
+    const clamped = Math.max(-lim, Math.min(lim, v));
+    pendingVelocity = clamped;
+    if (document.activeElement !== slider) slider.value = clamped;
+    _sendVelocity(clamped);
+  }
+
+  // Space bar = instant E-STOP from anywhere except text fields
+  document.addEventListener('keydown', e => {
+    if (e.code !== 'Space') return;
+    const t = e.target;
+    const isTextEntry = t.tagName === 'TEXTAREA' ||
+      (t.tagName === 'INPUT' && (t.type === 'text' || t.type === 'search' || t.type === 'number'));
+    e.preventDefault();   // always block page/sidebar scroll
+    if (!isTextEntry) odEStop();
+  }, { capture: true });
+
+  // ── ODrive polling (50 Hz) ────────────────────────────────────────────────
+  let _odPollInflight = false;
+  async function pollStatus() {
+    if (_odPollInflight) return;
+    _odPollInflight = true;
+    try { applyStatus(await api('/odrive/status')); } catch (_) {}
+    finally { _odPollInflight = false; }
+  }
+  pollStatus();
+  setInterval(pollStatus, 20);
+
+  // ── LabJack ───────────────────────────────────────────────────────────────
+
+  function applyLJStatus(s) {
+    document.getElementById('lj-state-dot').className  = 'state-dot ' + (s.connected ? 'running' : 'idle');
+    document.getElementById('lj-state-label').textContent = s.connected ? 'CONNECTED' : 'DISCONNECTED';
+    document.getElementById('btn-lj-connect').textContent = s.connected ? 'Disconnect' : 'Connect';
+    const ljBadge = document.getElementById('lj-badge');
+    ljBadge.textContent = s.connected ? '🔌 LabJack · Connected' : '🔌 LabJack · —';
+    ljBadge.style.color = s.connected ? '#4ade80' : '';
+  }
+
+  async function ljConnect() {
+    const btn = document.getElementById('btn-lj-connect');
+    const err = document.getElementById('lj-error');
+    err.style.display = 'none';
+
+    if (btn.textContent === 'Disconnect') {
+      applyLJStatus(await api('/labjack/disconnect', {}));
+      return;
+    }
+
+    btn.textContent = '...';
+    btn.disabled    = true;
+    const s = await api('/labjack/connect', {});
+    btn.disabled = false;
+    if (!s.ok) {
+      err.textContent = 'Could not connect to LabJack T4 — is it plugged in?';
+      err.style.display = 'block';
+    }
+    applyLJStatus(s);
+  }
+
+let _ljPollInflight = false;
+  async function pollLJStatus() {
+    if (_ljPollInflight) return;
+    _ljPollInflight = true;
+    try { applyLJStatus(await api('/labjack/status')); } catch (_) {}
+    finally { _ljPollInflight = false; }
+  }
+  pollLJStatus();
+  setInterval(pollLJStatus, 2000);
+
+  // ── Session management ────────────────────────────────────────────────────
+
+  function applyLogStatus(s) {
+    // Auto-detect session end (auto-stop, E-STOP, or manual end)
+    if (!s.logging && sessionState !== 'idle') {
+      sessionState = 'idle';
+      _velHistory.length = 0;
+      _drawVelPlot();
+      updateSessionUI();
+    }
+
+    const dot  = document.getElementById('log-status-dot');
+    const text = document.getElementById('log-status-text');
+    const hdr  = document.getElementById('log-hdr-badge');
+
+    if (s.recording) {
+      dot.style.background = '#ef4444';
+      dot.style.boxShadow  = '0 0 6px #ef4444';
+      dot.style.animation  = 'pulse 1.5s infinite';
+      text.style.color     = '#e2e8f0';
+      text.textContent     = s.filename || 'Recording…';
+      hdr.style.display    = 'inline';
+      document.getElementById('log-hdr-rows').textContent = s.row_count;
+    } else if (s.logging) {
+      dot.style.background = '#f59e0b';
+      dot.style.boxShadow  = '0 0 6px #f59e0b';
+      dot.style.animation  = 'none';
+      text.style.color     = '#f59e0b';
+      text.textContent     = `Paused — ${s.row_count} rows`;
+      hdr.style.display    = 'none';
+    } else {
+      dot.style.background = 'var(--muted)';
+      dot.style.boxShadow  = 'none';
+      dot.style.animation  = 'none';
+      text.style.color     = 'var(--muted)';
+      text.textContent     = s.row_count > 0
+        ? `Saved ${s.row_count} rows → ${s.filename}`
+        : 'Ready';
+      hdr.style.display    = 'none';
+    }
+
+    // Cycle counter
+    const cycleEl = document.getElementById('cycle-count');
+    const tc = parseInt(document.getElementById('target-cycles')?.value) || 0;
+    const sc = s.session_cycles ?? 0;
+    if (sc > 0 || (tc > 0 && s.logging)) {
+      cycleEl.textContent   = tc > 0 ? `Cycle ${sc} / ${tc}` : `Cycle ${sc}`;
+      cycleEl.style.display = '';
+    } else {
+      cycleEl.style.display = 'none';
+    }
+
+    // Download button — visible whenever a file has been written
+    document.getElementById('btn-download').style.display = s.filename ? '' : 'none';
+  }
+
+  async function sessionStart() {
+    const err = document.getElementById('session-error');
+    err.style.display = 'none';
+    const fn    = document.getElementById('log-filename').value.trim() || null;
+    const notes = document.getElementById('session-notes').value.trim() || null;
+    const tc    = parseInt(document.getElementById('target-cycles').value) || 0;
+    const r = await api('/session/start', {
+      velocity:      pendingVelocity,
+      filename:      fn,
+      notes:         notes,
+      target_cycles: tc,
+    });
+    if (!r.ok) {
+      err.textContent   = r.error || 'Could not start session';
+      err.style.display = 'block';
+      return;
+    }
+    applyStatus(r);
+    applyLogStatus(r.log);
+    sessionState = 'recording';
+    updateSessionUI();
+  }
+
+  async function sessionToggleRecording() {
+    if (sessionState === 'recording') {
+      const r = await api('/session/pause', {});
+      applyStatus(r);
+      applyLogStatus(r.log);
+      sessionState = 'paused';
+    } else if (sessionState === 'paused') {
+      const r = await api('/session/resume', { velocity: pendingVelocity });
+      if (!r.ok) return;
+      applyStatus(r);
+      applyLogStatus(r.log);
+      sessionState = 'recording';
+    }
+    updateSessionUI();
+  }
+
+  async function sessionEnd() {
+    const r = await api('/session/end', {});
+    applyStatus(r);
+    applyLogStatus(r.log);
+    sessionState = 'idle';
+    updateSessionUI();
+  }
+
+  let _logPollInflight = false;
+  async function pollLogStatus() {
+    if (_logPollInflight) return;
+    _logPollInflight = true;
+    try { applyLogStatus(await api('/log/status')); } catch (_) {}
+    finally { _logPollInflight = false; }
+  }
+  pollLogStatus();
+  setInterval(pollLogStatus, 1000);
+</script>
+</body>
+</html>
