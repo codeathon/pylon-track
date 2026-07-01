@@ -31,6 +31,7 @@ set(SOURCES
 	src/tracker/display.cpp
 	src/log/logger.cpp
 	src/motor/odrive.cpp
+	src/labjack/labjack_dac.cpp
 )
 
 # ── Compiler flags ────────────────────────────────────────────────────────────
@@ -92,6 +93,31 @@ add_library(cnpy STATIC third_party/cnpy/cnpy.cpp)
 target_include_directories(cnpy PUBLIC third_party/cnpy)
 target_link_libraries(cnpy PUBLIC ZLIB::ZLIB)
 
+# ── LabJack LJM ──────────────────────────────────────────────────────────────
+# Install from: https://labjack.com/pages/support?doc=/software-driver/installer-downloads/ljm-software-installers-t4-t7-digit/
+# Default install puts headers in /usr/local/include and lib in /usr/local/lib
+find_path(LJM_INCLUDE_DIR LabJackM.h
+	HINTS
+		/usr/local/include
+		/usr/include
+		"C:/Program Files (x86)/LabJack/Drivers"
+		"C:/Program Files/LabJack/Drivers")
+find_library(LJM_LIBRARY NAMES LabJackM
+	HINTS
+		/usr/local/lib
+		/usr/lib
+		"C:/Program Files (x86)/LabJack/Drivers"
+		"C:/Program Files/LabJack/Drivers")
+
+if(NOT LJM_INCLUDE_DIR OR NOT LJM_LIBRARY)
+	message(WARNING
+		"LabJack LJM library not found — labjack_dac.cpp will not compile.\n"
+		"Install LJM from https://labjack.com/pages/support?doc=/software-driver/installer-downloads/ljm-software-installers-t4-t7-digit/")
+else()
+	message(STATUS "LJM include : ${LJM_INCLUDE_DIR}")
+	message(STATUS "LJM library : ${LJM_LIBRARY}")
+endif()
+
 message(STATUS "Binary output  : ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 
 # ── Platform-specific configuration ──────────────────────────────────────────
@@ -136,6 +162,7 @@ if(UNIX)
 		${CMAKE_SOURCE_DIR}/include
 		${PYLON_ROOT}/include
 		${OpenCV_INCLUDE_DIRS}
+		${LJM_INCLUDE_DIR}
 	)
 
 	target_link_directories(ferret_tracker PRIVATE ${PYLON_ROOT}/lib)
@@ -147,6 +174,7 @@ if(UNIX)
 		cnpy
 		ZLIB::ZLIB
 		pthread
+		${LJM_LIBRARY}
 	)
 
 	# Copy camera config beside the executable for default runtime lookup.
