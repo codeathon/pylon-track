@@ -104,16 +104,9 @@
     .card-header .icon { font-size: 15px; }
     .card-body { padding: 14px; }
 
-    /* ── Camera column (left grid cell) ── */
-    .camera-col {
-      grid-column: 1;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-      min-height: 0;
-    }
+    /* ── Camera feed ── */
     .camera-card {
-      flex: 1;
+      grid-column: 1;
       display: flex;
       flex-direction: column;
       min-height: 0;
@@ -386,11 +379,10 @@
 
 <header>
   <div class="logo">pylon<span>-track</span></div>
+  <span class="badge live">LIVE</span>
+  <span class="badge proto" id="od-conn-badge">ODrive · Disconnected</span>
   <div class="spacer"></div>
-  <span id="cam-badge"    class="badge proto">📷 Camera · —</span>
-  <span id="od-conn-badge" class="badge proto">⚙ ODrive · —</span>
-  <span id="lj-badge"     class="badge proto">🔌 LabJack · —</span>
-  <span id="log-hdr-badge" style="font-size:11px;color:var(--muted);display:none;margin-left:4px">
+  <span id="log-hdr-badge" style="font-size:11px;color:var(--muted);display:none">
     ⏺ <span id="log-hdr-rows">0</span> rows
   </span>
   <div class="status-dot"></div>
@@ -398,36 +390,19 @@
 
 <main>
 
-  <!-- ── Left column: camera + plot ── -->
-  <div class="camera-col">
-
-    <div class="card camera-card">
-      <div class="card-header">
-        <span class="icon">📷</span> Camera Feed
-      </div>
-      <div class="card-body">
-        <img id="feed" src="/video_feed" alt="camera feed" />
-        <div class="camera-overlay">
-          <div class="overlay-tag green">● LIVE</div>
-          <div class="overlay-tag" id="time-tag">--:--:--</div>
-        </div>
+  <!-- ── Camera feed ── -->
+  <div class="card camera-card">
+    <div class="card-header">
+      <span class="icon">📷</span> Camera Feed
+    </div>
+    <div class="card-body">
+      <img id="feed" src="/video_feed" alt="camera feed" />
+      <div class="camera-overlay">
+        <div class="overlay-tag green">● LIVE</div>
+        <div class="overlay-tag" id="time-tag">--:--:--</div>
       </div>
     </div>
-
-    <!-- Velocity plot -->
-    <div class="card" style="flex-shrink:0">
-      <div class="card-header" style="padding:8px 14px">
-        <span class="icon">📈</span> Motor Velocity
-        <span id="plot-vel-label" style="margin-left:auto;font-size:11px;
-              color:var(--muted);font-variant-numeric:tabular-nums"></span>
-      </div>
-      <div class="card-body" style="padding:8px 14px 10px">
-        <canvas id="vel-plot" width="1200" height="80"
-                style="width:100%;height:80px;display:block"></canvas>
-      </div>
-    </div>
-
-  </div><!-- /.camera-col -->
+  </div>
 
   <div class="sidebar">
   <!-- ── ODrive panel ── -->
@@ -527,7 +502,7 @@
       <div class="od-actions" style="margin-top:10px">
         <button class="btn btn-neutral" id="btn-arm"    onclick="odArm()">Enable</button>
         <button class="btn btn-neutral" id="btn-disarm" onclick="odDisarm()">Disable</button>
-        <button class="btn btn-estop"   id="btn-estop"  onclick="odEStop()">⛔ E-STOP (SPACE)</button>
+        <button class="btn btn-estop"   id="btn-estop"  onclick="odEStop()">⛔ E-STOP</button>
       </div>
 
     </div>
@@ -632,18 +607,7 @@
       <input type="text" id="log-filename"
              placeholder="trial name (blank = auto: trial_YYYYMMDD_HHMMSS.csv)"
              style="width:100%;background:#0d0f14;border:1px solid var(--border);border-radius:6px;
-                    color:var(--text);padding:6px 10px;font-size:12px;outline:none;margin-bottom:6px" />
-      <textarea id="session-notes" rows="2" placeholder="Notes (optional)"
-                style="width:100%;background:#0d0f14;border:1px solid var(--border);border-radius:6px;
-                       color:var(--text);padding:6px 10px;font-size:12px;outline:none;resize:vertical;
-                       margin-bottom:6px;font-family:inherit"></textarea>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-        <span style="font-size:11px;color:var(--muted);white-space:nowrap">Auto-stop after</span>
-        <input type="number" id="target-cycles" min="0" step="1" value="0"
-               style="width:52px;background:#0d0f14;border:1px solid var(--border);border-radius:6px;
-                      color:var(--text);padding:4px 8px;font-size:12px;outline:none;text-align:right" />
-        <span style="font-size:11px;color:var(--muted)">cycles (0 = off)</span>
-      </div>
+                    color:var(--text);padding:6px 10px;font-size:12px;outline:none;margin-bottom:10px" />
 
       <!-- idle: single Start button -->
       <div id="session-idle">
@@ -670,15 +634,12 @@
         </button>
       </div>
 
-      <div style="display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:10px;margin-top:12px">
         <div id="log-status-dot" style="width:8px;height:8px;border-radius:50%;
              background:var(--muted);flex-shrink:0"></div>
         <span id="log-status-text" style="font-size:12px;color:var(--muted)">Ready</span>
-        <span id="cycle-count" style="font-size:11px;color:var(--accent2);display:none"></span>
-        <a id="btn-download" href="/log/download" download
-           style="display:none;margin-left:auto;font-size:11px;color:var(--accent);
-                  text-decoration:none;border:1px solid var(--accent);border-radius:4px;
-                  padding:2px 8px">↓ CSV</a>
+        <span id="log-rows" style="font-size:12px;color:var(--text);margin-left:auto;
+              font-variant-numeric:tabular-nums"></span>
       </div>
       <div id="session-error" style="font-size:11px;color:var(--danger);margin-top:6px;display:none"></div>
     </div>
@@ -767,53 +728,6 @@
   // initial render before first poll
   updateProgressBar(null, { cycle_turns:20, dac0_off_start:15, dac0_off_end:17, dac1_off_start:18 });
 
-  // ── Velocity plot ─────────────────────────────────────────────────────────
-  const _velHistory = [];
-  const _PLOT_S = 30;
-
-  function _pushVel(v) {
-    _velHistory.push({ t: Date.now(), v });
-    const cutoff = Date.now() - _PLOT_S * 1000;
-    while (_velHistory.length && _velHistory[0].t < cutoff) _velHistory.shift();
-  }
-
-  function _drawVelPlot() {
-    const canvas = document.getElementById('vel-plot');
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const W = canvas.width, H = canvas.height;
-    ctx.clearRect(0, 0, W, H);
-    const mid = H / 2;
-    ctx.strokeStyle = '#252d3d';
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(W, mid); ctx.stroke();
-    if (_velHistory.length < 2) return;
-    const now  = Date.now();
-    const maxV = Math.max(..._velHistory.map(p => Math.abs(p.v)), 1);
-    const pad  = 8;
-    ctx.strokeStyle = '#3b82f6';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    let first = true;
-    for (const p of _velHistory) {
-      const x = W * (1 - (now - p.t) / (_PLOT_S * 1000));
-      const y = mid - (p.v / maxV) * (mid - pad);
-      first ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-      first = false;
-    }
-    ctx.stroke();
-    ctx.fillStyle = '#475569';
-    ctx.font = '18px monospace';
-    ctx.fillText(`+${maxV.toFixed(1)}`, 8, pad + 16);
-    ctx.fillText('0', 8, mid + 8);
-    ctx.fillText(`-${maxV.toFixed(1)}`, 8, H - 4);
-    const lbl = document.getElementById('plot-vel-label');
-    if (lbl) {
-      const v = _velHistory[_velHistory.length - 1].v;
-      lbl.textContent = `${v >= 0 ? '+' : ''}${v.toFixed(2)} t/s`;
-    }
-  }
-
   // ── ODrive UI state ───────────────────────────────────────────────────────
   function applyStatus(s) {
     const dot   = document.getElementById('state-dot');
@@ -822,16 +736,12 @@
     dot.className     = 'state-dot ' + state.toLowerCase();
     label.textContent = state;
 
-    const camBadge = document.getElementById('cam-badge');
-    camBadge.textContent = '📷 Camera · Online';
-    camBadge.style.color = '#4ade80';
-
     const badge = document.getElementById('od-conn-badge');
     if (s.connected) {
-      badge.textContent = '⚙ ODrive · ' + s.port;
+      badge.textContent = 'ODrive · ' + s.port;
       badge.style.color = '#4ade80';
     } else {
-      badge.textContent = '⚙ ODrive · —';
+      badge.textContent = 'ODrive · Disconnected';
       badge.style.color = '';
     }
 
@@ -896,10 +806,6 @@
       document.getElementById('cfg-cycle').value = cfg.cycle_turns    ?? '';
       applyStatus._cfgLoaded = true;
     }
-
-    _motorArmed = armed;
-    _pushVel(s.velocity ?? 0);
-    _drawVelPlot();
   }
   applyStatus._cfgLoaded = false;
 
@@ -1023,12 +929,10 @@
     }
   }
 
-  let _motorArmed = false;
   let velInflight = false;
 
   async function _sendVelocity(v) {
-    // Allow velocity in session recording OR when motor is manually armed (no session)
-    if (sessionState !== 'recording' && !(sessionState === 'idle' && _motorArmed)) return;
+    if (sessionState !== 'recording') return;
     if (velInflight) return;
     velInflight = true;
     try {
@@ -1085,9 +989,6 @@
     document.getElementById('lj-state-dot').className  = 'state-dot ' + (s.connected ? 'running' : 'idle');
     document.getElementById('lj-state-label').textContent = s.connected ? 'CONNECTED' : 'DISCONNECTED';
     document.getElementById('btn-lj-connect').textContent = s.connected ? 'Disconnect' : 'Connect';
-    const ljBadge = document.getElementById('lj-badge');
-    ljBadge.textContent = s.connected ? '🔌 LabJack · Connected' : '🔌 LabJack · —';
-    ljBadge.style.color = s.connected ? '#4ade80' : '';
   }
 
   async function ljConnect() {
@@ -1124,16 +1025,9 @@ let _ljPollInflight = false;
   // ── Session management ────────────────────────────────────────────────────
 
   function applyLogStatus(s) {
-    // Auto-detect session end (auto-stop, E-STOP, or manual end)
-    if (!s.logging && sessionState !== 'idle') {
-      sessionState = 'idle';
-      _velHistory.length = 0;
-      _drawVelPlot();
-      updateSessionUI();
-    }
-
     const dot  = document.getElementById('log-status-dot');
     const text = document.getElementById('log-status-text');
+    const rows = document.getElementById('log-rows');
     const hdr  = document.getElementById('log-hdr-badge');
 
     if (s.recording) {
@@ -1142,6 +1036,7 @@ let _ljPollInflight = false;
       dot.style.animation  = 'pulse 1.5s infinite';
       text.style.color     = '#e2e8f0';
       text.textContent     = s.filename || 'Recording…';
+      rows.textContent     = s.row_count > 0 ? s.row_count + ' rows' : '';
       hdr.style.display    = 'inline';
       document.getElementById('log-hdr-rows').textContent = s.row_count;
     } else if (s.logging) {
@@ -1150,6 +1045,7 @@ let _ljPollInflight = false;
       dot.style.animation  = 'none';
       text.style.color     = '#f59e0b';
       text.textContent     = `Paused — ${s.row_count} rows`;
+      rows.textContent     = '';
       hdr.style.display    = 'none';
     } else {
       dot.style.background = 'var(--muted)';
@@ -1159,36 +1055,16 @@ let _ljPollInflight = false;
       text.textContent     = s.row_count > 0
         ? `Saved ${s.row_count} rows → ${s.filename}`
         : 'Ready';
+      rows.textContent     = '';
       hdr.style.display    = 'none';
     }
-
-    // Cycle counter
-    const cycleEl = document.getElementById('cycle-count');
-    const tc = parseInt(document.getElementById('target-cycles')?.value) || 0;
-    const sc = s.session_cycles ?? 0;
-    if (sc > 0 || (tc > 0 && s.logging)) {
-      cycleEl.textContent   = tc > 0 ? `Cycle ${sc} / ${tc}` : `Cycle ${sc}`;
-      cycleEl.style.display = '';
-    } else {
-      cycleEl.style.display = 'none';
-    }
-
-    // Download button — visible whenever a file has been written
-    document.getElementById('btn-download').style.display = s.filename ? '' : 'none';
   }
 
   async function sessionStart() {
     const err = document.getElementById('session-error');
     err.style.display = 'none';
-    const fn    = document.getElementById('log-filename').value.trim() || null;
-    const notes = document.getElementById('session-notes').value.trim() || null;
-    const tc    = parseInt(document.getElementById('target-cycles').value) || 0;
-    const r = await api('/session/start', {
-      velocity:      pendingVelocity,
-      filename:      fn,
-      notes:         notes,
-      target_cycles: tc,
-    });
+    const fn  = document.getElementById('log-filename').value.trim() || null;
+    const r   = await api('/session/start', { velocity: pendingVelocity, filename: fn });
     if (!r.ok) {
       err.textContent   = r.error || 'Could not start session';
       err.style.display = 'block';

@@ -28,9 +28,9 @@ bool LabJackDAC::open() {
     }
     handle_ = handle;
 
-    // DACs are always-on by default
-    write_dac("DAC0", cfg_.dac0_voltage);
-    write_dac("DAC1", cfg_.dac1_voltage);
+    // Start with both DACs on
+    write_dac("DAC0", 5.0f);
+    write_dac("DAC1", 5.0f);
     dac0_active_ = true;
     dac1_active_ = true;
 
@@ -46,20 +46,21 @@ void LabJackDAC::update(float motor_position_turns) {
     float pos = std::fmod(motor_position_turns, cycle);
     if (pos < 0.0f) pos += cycle;
 
-    // Always ON except within the specified window
-    const bool want_dac0 = !(pos >= cfg_.dac0_on_start && pos <= cfg_.dac0_on_end);
+    // DAC0 window
+    const bool want_dac0 = (pos >= cfg_.dac0_on_start && pos <= cfg_.dac0_on_end);
     if (want_dac0 != dac0_active_) {
-        write_dac("DAC0", want_dac0 ? cfg_.dac0_voltage : 0.0f);
+        write_dac("DAC0", want_dac0 ? cfg_.dac0_voltage : 5.0f);
         dac0_active_ = want_dac0;
-        LOG_INFO(std::string("LabJack: DAC0 ") + (want_dac0 ? "ON" : "OFF") +
+        LOG_INFO(std::string("LabJack: DAC0 ") + (want_dac0 ? "OFF" : "ON") +
                  " at pos=" + std::to_string(pos) + " turns");
     }
 
-    const bool want_dac1 = !(pos >= cfg_.dac1_on_start);
+    // DAC1 window
+    const bool want_dac1 = (pos >= cfg_.dac1_on_start && pos <= cfg_.dac1_on_end);
     if (want_dac1 != dac1_active_) {
-        write_dac("DAC1", want_dac1 ? cfg_.dac1_voltage : 0.0f);
+        write_dac("DAC1", want_dac1 ? cfg_.dac1_voltage : 5.0f);
         dac1_active_ = want_dac1;
-        LOG_INFO(std::string("LabJack: DAC1 ") + (want_dac1 ? "ON" : "OFF") +
+        LOG_INFO(std::string("LabJack: DAC1 ") + (want_dac1 ? "OFF" : "ON") +
                  " at pos=" + std::to_string(pos) + " turns");
     }
 }
@@ -67,10 +68,10 @@ void LabJackDAC::update(float motor_position_turns) {
 void LabJackDAC::close() {
     if (handle_ < 0) return;
 
-    write_dac("DAC0", 0.0f);
-    write_dac("DAC1", 0.0f);
-    dac0_active_ = false;
-    dac1_active_ = false;
+    write_dac("DAC0", 5.0f);
+    write_dac("DAC1", 5.0f);
+    dac0_active_ = true;
+    dac1_active_ = true;
 
     LJM_Close(handle_);
     handle_ = -1;
