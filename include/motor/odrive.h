@@ -39,6 +39,9 @@ public:
     // Set target velocity [turns/s]. Clamped to ±vel_limit_.
     void set_velocity(float turns_per_s);
 
+    // Query the encoder position estimate [turns]. Returns 0 on error.
+    float get_position();
+
     // Set velocity to 0 and put axis back to IDLE (state 1).
     void stop();
 

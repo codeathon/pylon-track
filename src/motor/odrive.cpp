@@ -109,6 +109,17 @@ void ODrive::set_velocity(float turns_per_s) {
     send("v 0 " + std::to_string(clamped));
 }
 
+float ODrive::get_position() {
+    send("r axis0.pos_estimate");
+    const std::string resp = recv_line(200);
+    if (resp.empty()) return 0.0f;
+    try {
+        return std::stof(resp);
+    } catch (...) {
+        return 0.0f;
+    }
+}
+
 void ODrive::stop() {
     // Zero velocity first, then go idle
     send("v 0 0");

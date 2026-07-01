@@ -15,6 +15,8 @@
 #include "tracker/ferret_tracker.h"
 #include "tracker/display.h"
 #include "log/logger.h"
+#include "motor/odrive.h"
+#include "labjack/labjack_dac.h"
 
 using namespace Pylon;
 
@@ -76,11 +78,30 @@ static void init_logger(const AppOptions& opts) {
 
 int main(int argc, char** argv) {
 	AppOptions opts;
-	// Logger uses default Info until init_logger runs after arg parse.
 	if (!parse_args(argc, argv, opts)) {
 		return 1;
 	}
 	init_logger(opts);
+
+	// ── ODrive + LabJack setup ──────────────────────────────────────────────
+	ODrive odrive;
+	LabJackDAC labjack;
+
+	// ODrive: open on /dev/ttyACM0 (change port if needed)
+	if (odrive.open("/dev/ttyACM0")) {
+		odrive.set_velocity_limit(10.0f);
+		odrive.enable();
+		log_info("main", "ODrive ready");
+	} else {
+		log_info("main", "ODrive not connected — motor control disabled");
+	}
+
+	// LabJack: auto-detects T4 over USB
+	if (labjack.open()) {
+		log_info("main", "LabJack T4 ready");
+	} else {
+		log_info("main", "LabJack not connected — DAC control disabled");
+	}
 
 	std::signal(SIGINT,  signal_handler);
 	std::signal(SIGTERM, signal_handler);
@@ -157,6 +178,12 @@ int main(int argc, char** argv) {
 		while (g_running.load()) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
+			// Read motor position and update LabJack DAC outputs
+			if (odrive.is_open()) {
+				const float pos = odrive.get_position();
+				labjack.update(pos);
+			}
+
 			if (!tracker.ferret.valid || !tracker.prey.valid) continue;
 
 			// Telemetry: raw stdout without logger prefix for piping/scripts.
@@ -182,6 +209,10 @@ int main(int argc, char** argv) {
 			display.stop();
 			display_started = false;
 		}
+
+		odrive.stop();
+		odrive.close();
+		labjack.close();
 		log_info("main", "Stopped");
 
 	} catch (const GenericException& e) {
