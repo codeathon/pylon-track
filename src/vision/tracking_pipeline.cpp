@@ -6,7 +6,7 @@
 #include "tracker.h"
 
 TrackingPipeline::TrackingPipeline(int warmup_frames, float gsd_mm_px, float fps,
-	std::optional<CameraCalib> calib)
+	std::optional<CameraCalib> calib, std::optional<ArenaMaskConfig> mask_cfg)
 	: warmup_frames_(warmup_frames)
 	, gsd_mm_px_(gsd_mm_px)
 	, fps_(fps)
@@ -14,6 +14,7 @@ TrackingPipeline::TrackingPipeline(int warmup_frames, float gsd_mm_px, float fps
 	, kf_ferret_(make_kalman(fps))
 	, kf_prey_(make_kalman(fps))
 	, morph_kernel_(cv::getStructuringElement(cv::MORPH_ELLIPSE, {7, 7}))
+	, arena_mask_(mask_cfg.value_or(ArenaMaskConfig{}))
 {
 	if (calib && calib->enabled()) {
 		use_undistort_ = true;
@@ -21,6 +22,9 @@ TrackingPipeline::TrackingPipeline(int warmup_frames, float gsd_mm_px, float fps
 		undist_map2_ = calib->map2;
 		undist_buf_ = cv::Mat(calib->image_size, CV_8UC1);
 		log_info("tracker", "Lens undistort enabled");
+	}
+	if (arena_mask_.enabled()) {
+		log_info("tracker", "Arena mask enabled (ignore_regions / track_roi)");
 	}
 }
 
@@ -72,6 +76,7 @@ TrackingProcessOutput TrackingPipeline::process(const CameraFrame& input,
 	cv::Mat mask;
 	bg_->apply(frame, mask, lr);
 	cv::morphologyEx(mask, mask, cv::MORPH_OPEN, morph_kernel_);
+	arena_mask_.apply(mask);
 
 	std::vector<std::vector<cv::Point>> contours;
 	cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);

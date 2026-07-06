@@ -14,6 +14,41 @@ T json_or(const nlohmann::json& j, const char* key, T fallback) {
 	return fallback;
 }
 
+std::vector<cv::Point> parse_polygon_points(const nlohmann::json& points_json) {
+	std::vector<cv::Point> points;
+	if (!points_json.is_array()) {
+		return points;
+	}
+	for (const auto& pt : points_json) {
+		if (!pt.is_array() || pt.size() < 2) {
+			continue;
+		}
+		points.emplace_back(pt.at(0).get<int>(), pt.at(1).get<int>());
+	}
+	return points;
+}
+
+void load_ignore_regions(const nlohmann::json& vision_json, ArenaMaskConfig& mask) {
+	if (!vision_json.contains("ignore_regions")) {
+		return;
+	}
+	for (const auto& region_json : vision_json.at("ignore_regions")) {
+		PolygonRegion region;
+		region.points = parse_polygon_points(region_json.at("points"));
+		if (region.points.size() >= 3) {
+			mask.ignore_regions.push_back(region);
+		}
+	}
+}
+
+void load_track_roi(const nlohmann::json& vision_json, ArenaMaskConfig& mask) {
+	if (!vision_json.contains("track_roi") || vision_json.at("track_roi").is_null()) {
+		return;
+	}
+	mask.track_roi = parse_polygon_points(vision_json.at("track_roi").at("points"));
+	mask.has_track_roi = mask.track_roi.size() >= 3;
+}
+
 } // namespace
 
 bool load_arena_experiment_config(const std::string& path, ArenaExperimentConfig& out) {
@@ -36,6 +71,49 @@ bool load_arena_experiment_config(const std::string& path, ArenaExperimentConfig
 				out.chase.threat_distance_mm);
 			out.chase.creep_distance_mm = json_or(c, "creep_distance_mm",
 				out.chase.creep_distance_mm);
+		}
+		if (j.contains("motor")) {
+			const auto& m = j.at("motor");
+			out.motor.can_interface = json_or(m, "can_interface", out.motor.can_interface);
+			out.motor.node_id = json_or(m, "node_id", out.motor.node_id);
+			out.motor.pulley_radius_m = json_or(m, "pulley_radius_m", out.motor.pulley_radius_m);
+			out.motor.chain_direction_sign = json_or(m, "chain_direction_sign",
+				out.motor.chain_direction_sign);
+			out.motor.chain_mm_per_motor_turn = json_or(m, "chain_mm_per_motor_turn",
+				out.motor.chain_mm_per_motor_turn);
+		}
+		if (j.contains("trap_door")) {
+			const auto& t = j.at("trap_door");
+			out.trap_door.backend = json_or(t, "backend", out.trap_door.backend);
+			out.trap_door.open_hold_ms = json_or(t, "open_hold_ms", out.trap_door.open_hold_ms);
+			if (t.contains("labjack")) {
+				const auto& lj = t.at("labjack");
+				out.trap_door.labjack.device_type = json_or(lj, "device_type",
+					out.trap_door.labjack.device_type);
+				out.trap_door.labjack.connection = json_or(lj, "connection",
+					out.trap_door.labjack.connection);
+				out.trap_door.labjack.identifier = json_or(lj, "identifier",
+					out.trap_door.labjack.identifier);
+				out.trap_door.labjack.dio_pin = json_or(lj, "dio_pin",
+					out.trap_door.labjack.dio_pin);
+				out.trap_door.labjack.active_high = json_or(lj, "active_high",
+					out.trap_door.labjack.active_high);
+			}
+		}
+		if (j.contains("vision")) {
+			const auto& v = j.at("vision");
+			load_ignore_regions(v, out.vision.mask);
+			load_track_roi(v, out.vision.mask);
+			out.vision.ferret_area_px_min = json_or(v, "ferret_area_px_min",
+				out.vision.ferret_area_px_min);
+			out.vision.ferret_area_px_max = json_or(v, "ferret_area_px_max",
+				out.vision.ferret_area_px_max);
+			out.vision.prey_area_px_min = json_or(v, "prey_area_px_min",
+				out.vision.prey_area_px_min);
+			out.vision.prey_area_px_max = json_or(v, "prey_area_px_max",
+				out.vision.prey_area_px_max);
+			out.vision.max_compactness = json_or(v, "max_compactness",
+				out.vision.max_compactness);
 		}
 		if (j.contains("trial")) {
 			out.trial_timeout_s = json_or(j.at("trial"), "timeout_s", out.trial_timeout_s);

@@ -5,6 +5,7 @@
 #include <vector>
 #include "camera/camera_calib.h"
 #include "experiment/trial_state.h"
+#include "vision/arena_mask.h"
 #include "vision/camera_frame.h"
 #include "vision/tracking_frame.h"
 
@@ -18,7 +19,8 @@ struct TrackingProcessOutput {
 class TrackingPipeline {
 public:
 	explicit TrackingPipeline(int warmup_frames, float gsd_mm_px, float fps,
-		std::optional<CameraCalib> calib = std::nullopt);
+		std::optional<CameraCalib> calib = std::nullopt,
+		std::optional<ArenaMaskConfig> mask_cfg = std::nullopt);
 
 	TrackingProcessOutput process(const CameraFrame& input, TrialPhase trial_phase);
 
@@ -36,6 +38,7 @@ private:
 	cv::KalmanFilter kf_ferret_;
 	cv::KalmanFilter kf_prey_;
 	cv::Mat morph_kernel_;
+	ArenaMask arena_mask_;
 	uint64_t frame_count_ = 0;
 
 	void update_track(cv::KalmanFilter& kf, const std::vector<cv::Point>& contour,

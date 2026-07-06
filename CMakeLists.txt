@@ -35,8 +35,21 @@ set(SOURCES
 	src/experiment/session_recorder.cpp
 	src/vision/camera_frame.cpp
 	src/vision/tracking_frame.cpp
+	src/vision/arena_mask.cpp
 	src/vision/tracking_pipeline.cpp
 )
+
+set(MOTOR_SOURCES
+	src/motor/odrive_can.cpp
+	src/motor/prey_motor.cpp
+	src/motor/motion_planner.cpp
+	src/motor/labjack_io.cpp
+	src/motor/trap_door_motor.cpp
+)
+
+# ── Optional LabJack LJM (trap door DIO) ─────────────────────────────────────
+option(ENABLE_LABJACK "Link LabJack LJM for trap door control" ON)
+set(LJM_ROOT "/usr/local/lib" CACHE PATH "LabJack LJM library directory")
 
 # ── Compiler flags ────────────────────────────────────────────────────────────
 add_compile_options(-O3 -march=native -Wall -Wextra)
@@ -136,6 +149,27 @@ if(UNIX)
 	endif()
 
 	add_executable(ferret_tracker ${SOURCES})
+
+	add_library(arena_motor STATIC ${MOTOR_SOURCES})
+	target_include_directories(arena_motor PUBLIC
+		${CMAKE_SOURCE_DIR}/include
+	)
+	target_link_libraries(arena_motor PUBLIC pthread)
+
+	if(ENABLE_LABJACK)
+		find_path(LJM_INCLUDE_DIR LabJackM.h
+			HINTS /usr/include /usr/local/include ${LJM_ROOT}/../include)
+		find_library(LJM_LIBRARY NAMES labjacklm
+			HINTS ${LJM_ROOT} /usr/lib /usr/local/lib)
+		if(LJM_INCLUDE_DIR AND LJM_LIBRARY)
+			target_compile_definitions(arena_motor PRIVATE PYLON_TRACK_HAS_LJM=1)
+			target_include_directories(arena_motor PRIVATE ${LJM_INCLUDE_DIR})
+			target_link_libraries(arena_motor PRIVATE ${LJM_LIBRARY})
+			message(STATUS "LabJack LJM   : ${LJM_LIBRARY}")
+		else()
+			message(STATUS "LabJack LJM   : not found — trap door LabJack backend stubbed")
+		endif()
+	endif()
 
 	target_include_directories(ferret_tracker PRIVATE
 		${CMAKE_SOURCE_DIR}/include

@@ -15,6 +15,7 @@ set(CALIB_PROD_SOURCES
 	${CMAKE_SOURCE_DIR}/src/experiment/session_recorder.cpp
 	${CMAKE_SOURCE_DIR}/src/vision/camera_frame.cpp
 	${CMAKE_SOURCE_DIR}/src/vision/tracking_frame.cpp
+	${CMAKE_SOURCE_DIR}/src/vision/arena_mask.cpp
 	${CMAKE_SOURCE_DIR}/src/vision/tracking_pipeline.cpp
 )
 
