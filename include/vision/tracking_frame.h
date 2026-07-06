@@ -8,6 +8,13 @@ struct AnimalTrack {
 	TrackState state;
 };
 
+// Per-frame identification confidence for State Manager readiness gates.
+struct TrackingQuality {
+	float ferret_confidence = 0.0f;
+	float prey_confidence = 0.0f;
+	const char* reject_reason = nullptr;
+};
+
 // Output of OpenCV tracking — input to chase policy and session recorder.
 struct TrackingFrame {
 	uint64_t frame_index = 0;
@@ -16,6 +23,7 @@ struct TrackingFrame {
 
 	AnimalTrack ferret;
 	AnimalTrack prey;
+	TrackingQuality quality;
 
 	float distance_mm = -1.0f;
 	float bearing_deg = 0.0f;

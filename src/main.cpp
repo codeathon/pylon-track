@@ -252,7 +252,15 @@ int main(int argc, char** argv) {
 			}
 		}
 
-		FerretTracker tracker(opts.enable_display, WARMUP_FRAMES, GSD_MM_PX, calib);
+		std::optional<ArenaMaskConfig> mask_cfg;
+		std::optional<VisionConfig> vision_cfg;
+		if (experiment_mode) {
+			mask_cfg = arena_cfg.vision.mask;
+			vision_cfg = arena_cfg.vision;
+		}
+
+		FerretTracker tracker(opts.enable_display, WARMUP_FRAMES, GSD_MM_PX, calib,
+			mask_cfg, vision_cfg);
 		if (experiment_mode) {
 			tracker.set_experiment_hooks(&trial_fsm, &session_recorder);
 		}

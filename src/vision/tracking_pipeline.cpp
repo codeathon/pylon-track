@@ -6,7 +6,8 @@
 #include "tracker.h"
 
 TrackingPipeline::TrackingPipeline(int warmup_frames, float gsd_mm_px, float fps,
-	std::optional<CameraCalib> calib, std::optional<ArenaMaskConfig> mask_cfg)
+	std::optional<CameraCalib> calib, std::optional<ArenaMaskConfig> mask_cfg,
+	std::optional<VisionConfig> vision_cfg)
 	: warmup_frames_(warmup_frames)
 	, gsd_mm_px_(gsd_mm_px)
 	, fps_(fps)
@@ -15,6 +16,7 @@ TrackingPipeline::TrackingPipeline(int warmup_frames, float gsd_mm_px, float fps
 	, kf_prey_(make_kalman(fps))
 	, morph_kernel_(cv::getStructuringElement(cv::MORPH_ELLIPSE, {7, 7}))
 	, arena_mask_(mask_cfg.value_or(ArenaMaskConfig{}))
+	, associator_(vision_cfg.value_or(VisionConfig{}))
 {
 	if (calib && calib->enabled()) {
 		use_undistort_ = true;
@@ -85,21 +87,29 @@ TrackingProcessOutput TrackingPipeline::process(const CameraFrame& input,
 			const float a = static_cast<float>(cv::contourArea(c));
 			return a < 200.0f || a > 60000.0f;
 		}), contours.end());
-	std::sort(contours.begin(), contours.end(), [](const auto& a, const auto& b) {
-		return cv::contourArea(a) > cv::contourArea(b);
-	});
 	out.contours = contours;
 
 	TrackState& ferret = out.frame.ferret.state;
 	TrackState& prey = out.frame.prey.state;
+	ferret.valid = false;
+	prey.valid = false;
 
-	if (contours.size() >= 2) {
-		update_track(kf_ferret_, contours[0], ferret);
-		update_track(kf_prey_, contours[1], prey);
-	} else if (contours.size() == 1) {
-		const float area = static_cast<float>(cv::contourArea(contours[0]));
-		if (area > 15000.0f) {
-			update_track(kf_ferret_, contours[0], ferret);
+	const AssociationResult assoc = associator_.associate(
+		contours, ferret_prior_, prey_prior_);
+	out.frame.quality.ferret_confidence = assoc.ferret_confidence;
+	out.frame.quality.prey_confidence = assoc.prey_confidence;
+	out.frame.quality.reject_reason = assoc.reject_reason;
+
+	if (assoc.ferret_idx >= 0) {
+		update_track(kf_ferret_, contours[static_cast<size_t>(assoc.ferret_idx)], ferret);
+	}
+	if (assoc.prey_idx >= 0) {
+		update_track(kf_prey_, contours[static_cast<size_t>(assoc.prey_idx)], prey);
+	} else if (assoc.ferret_idx >= 0 && ferret.valid) {
+		// Occlusion: ferret visible alone — coast prey on Kalman prediction.
+		const float merged_area = static_cast<float>(
+			cv::contourArea(contours[static_cast<size_t>(assoc.ferret_idx)]));
+		if (merged_area > 15000.0f && prey_prior_.valid) {
 			cv::Mat pred = kf_prey_.predict();
 			prey.pos_px = {pred.at<float>(0), pred.at<float>(1)};
 			prey.pos_mm = prey.pos_px * gsd_mm_px_;
@@ -107,15 +117,13 @@ TrackingProcessOutput TrackingPipeline::process(const CameraFrame& input,
 				+ std::pow(pred.at<float>(3), 2)) * fps_ * gsd_mm_px_;
 			prey.direction_deg = std::atan2(-pred.at<float>(3), pred.at<float>(2))
 				* 180.0f / static_cast<float>(M_PI);
-			prey.valid = true; // coast on prior velocity during occlusion
-		} else {
-			update_track(kf_ferret_, contours[0], ferret);
-			prey.valid = false;
+			prey.valid = true;
+			out.frame.quality.prey_confidence *= 0.5f;
 		}
-	} else {
-		ferret.valid = false;
-		prey.valid = false;
 	}
+
+	ferret_prior_ = ferret;
+	prey_prior_ = prey;
 
 	fill_tracking_derived(out.frame, fps_);
 	++frame_count_;

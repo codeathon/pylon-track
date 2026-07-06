@@ -36,7 +36,9 @@ set(SOURCES
 	src/vision/camera_frame.cpp
 	src/vision/tracking_frame.cpp
 	src/vision/arena_mask.cpp
+	src/vision/object_associator.cpp
 	src/vision/tracking_pipeline.cpp
+	src/vision/camera_tracking_service.cpp
 )
 
 set(MOTOR_SOURCES
@@ -45,6 +47,8 @@ set(MOTOR_SOURCES
 	src/motor/motion_planner.cpp
 	src/motor/labjack_io.cpp
 	src/motor/trap_door_motor.cpp
+	src/motor/chase_policy.cpp
+	src/motor/chase_controller.cpp
 )
 
 # ── Optional LabJack LJM (trap door DIO) ─────────────────────────────────────
