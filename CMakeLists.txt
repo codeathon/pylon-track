@@ -22,8 +22,7 @@ endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # ── Sources ───────────────────────────────────────────────────────────────────
-set(SOURCES
-	src/main.cpp
+set(ARENA_PIPELINE_SOURCES
 	src/camera/camera_config.cpp
 	src/camera/camera_calib.cpp
 	src/tracker/tracker.cpp
@@ -33,12 +32,18 @@ set(SOURCES
 	src/experiment/trial_state.cpp
 	src/experiment/arena_config.cpp
 	src/experiment/session_recorder.cpp
+	src/experiment/state_manager.cpp
 	src/vision/camera_frame.cpp
 	src/vision/tracking_frame.cpp
 	src/vision/arena_mask.cpp
 	src/vision/object_associator.cpp
 	src/vision/tracking_pipeline.cpp
 	src/vision/camera_tracking_service.cpp
+)
+
+set(SOURCES
+	src/main.cpp
+	${ARENA_PIPELINE_SOURCES}
 )
 
 set(MOTOR_SOURCES
@@ -154,6 +159,11 @@ if(UNIX)
 
 	add_executable(ferret_tracker ${SOURCES})
 
+	add_executable(arena_experiment
+		src/arena_experiment_main.cpp
+		${ARENA_PIPELINE_SOURCES}
+	)
+
 	add_library(arena_motor STATIC ${MOTOR_SOURCES})
 	target_include_directories(arena_motor PUBLIC
 		${CMAKE_SOURCE_DIR}/include
@@ -192,6 +202,26 @@ if(UNIX)
 		pthread
 	)
 
+	target_include_directories(arena_experiment PRIVATE
+		${CMAKE_SOURCE_DIR}/include
+		${PYLON_ROOT}/include
+		${OpenCV_INCLUDE_DIRS}
+	)
+	target_link_directories(arena_experiment PRIVATE ${PYLON_ROOT}/lib)
+	target_link_libraries(arena_experiment
+		${PYLON_LINK_FLAGS}
+		${OpenCV_LIBS}
+		nlohmann_json::nlohmann_json
+		cnpy
+		ZLIB::ZLIB
+		arena_motor
+		pthread
+	)
+	set_target_properties(arena_experiment PROPERTIES
+		INSTALL_RPATH "${PYLON_ROOT}/lib"
+		BUILD_RPATH   "${PYLON_ROOT}/lib"
+	)
+
 	# Copy camera config beside the executable for default runtime lookup.
 	configure_file(
 		${CMAKE_SOURCE_DIR}/src/camera/camera_config.json
@@ -212,6 +242,7 @@ if(UNIX)
 		DEPENDS ${CMAKE_BINARY_DIR}/bin/config/arena_experiment.json
 	)
 	add_dependencies(ferret_tracker copy_arena_config)
+	add_dependencies(arena_experiment copy_camera_config copy_arena_config)
 
 	# RPATH: embed pylon lib path so the binary runs without LD_LIBRARY_PATH
 	set_target_properties(ferret_tracker PROPERTIES
@@ -243,9 +274,10 @@ if(UNIX)
 
 	message(STATUS
 		"Linux targets available:\n"
-		"  make ferret_tracker   — build → bin/ferret_tracker\n"
-		"  make run_rt           — run with SCHED_FIFO priority (low jitter)\n"
-		"  make install_udev     — install udev rules for USB camera access")
+		"  make ferret_tracker    — build → bin/ferret_tracker\n"
+		"  make arena_experiment  — build → bin/arena_experiment\n"
+		"  make run_rt            — run with SCHED_FIFO priority (low jitter)\n"
+		"  make install_udev      — install udev rules for USB camera access")
 
 	# ── Calibration test suite (tests/) ───────────────────────────────────
 	# Camera-attached tools: parameter sweep, latency benchmark, mount
