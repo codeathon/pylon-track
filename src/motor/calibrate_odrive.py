@@ -12,9 +12,9 @@ Requires:
   pip install odrive
 
 Usage (from repo root):
-  python motor/calibrate_odrive.py --config config/arena_experiment.json
-  python motor/calibrate_odrive.py --config config/arena_experiment.json --serial <SN>
-  python motor/calibrate_odrive.py --dry-run   # print CAN checklist only
+  python src/motor/calibrate_odrive.py --config config/arena_experiment.json
+  python src/motor/calibrate_odrive.py --config config/arena_experiment.json --serial <SN>
+  python src/motor/calibrate_odrive.py --dry-run   # print CAN checklist only
 """
 
 import argparse
@@ -24,7 +24,7 @@ import sys
 import time
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_CONFIG = REPO_ROOT / "config" / "arena_experiment.json"
 
 
@@ -121,7 +121,7 @@ def prompt_direction() -> int:
 		print("Answer y or n.")
 
 
-def calibrate_chain(cfg: dict, serial_number: str | None, test_turns_s: float,
+def calibrate_chain(cfg: dict, serial_number, test_turns_s: float,
 	test_duration_s: float) -> dict:
 	odrv = connect_odrive(serial_number)
 	axis = odrv.axis0

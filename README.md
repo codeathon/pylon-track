@@ -61,8 +61,6 @@ pylon-track/
 ├── CMakeLists.txt
 ├── config/
 │   └── arena_experiment.json   Chase policy, motor, vision masks, trap door
-├── motor/
-│   └── calibrate_odrive.py     One-time ODrive S1 USB chain calibration
 ├── include/
 │   ├── camera/                 Camera config + lens calib
 │   ├── experiment/           State manager, session recorder, trial FSM
@@ -76,7 +74,7 @@ pylon-track/
 │   ├── camera/
 │   ├── experiment/
 │   ├── log/
-│   ├── motor/
+│   ├── motor/                  C++ drivers + calibrate_odrive.py
 │   ├── tracker/
 │   └── vision/
 ├── tests/                    Camera calibration suite (hardware-in-the-loop)
@@ -181,7 +179,7 @@ cp calib.npz build/bin/
 
 # 2. ODrive chain calib over USB (once) — writes config/arena_experiment.json
 pip install odrive
-python motor/calibrate_odrive.py --config config/arena_experiment.json
+python src/motor/calibrate_odrive.py --config config/arena_experiment.json
 
 # 3. Enable CAN on the experiment PC, then run
 sudo ip link set can0 up type can bitrate 250000
@@ -215,14 +213,14 @@ Session output: `sessions/arena_experiment/<timestamp>/telemetry.csv` + `events.
 
 Mark pulley/chain exclusion zones in `ignore_regions` (polygon points in image pixels).
 
-### ODrive motor calibration (`motor/calibrate_odrive.py`)
+### ODrive motor calibration (`src/motor/calibrate_odrive.py`)
 
 One-time USB setup before CAN runtime. Measures how many millimeters of chain
 travel correspond to one motor revolution and confirms direction sign:
 
 ```bash
 pip install odrive
-python motor/calibrate_odrive.py --config config/arena_experiment.json
+python src/motor/calibrate_odrive.py --config config/arena_experiment.json
 ```
 
 The script updates `motor.chain_mm_per_motor_turn`, `motor.pulley_radius_m`, and
@@ -232,7 +230,7 @@ over SocketCAN — not USB.
 Print CAN bring-up steps without connecting:
 
 ```bash
-python motor/calibrate_odrive.py --dry-run --config config/arena_experiment.json
+python src/motor/calibrate_odrive.py --dry-run --config config/arena_experiment.json
 ```
 
 Build with LabJack trap-door support (optional):
@@ -611,7 +609,7 @@ metric interpretation.
 | `pylon SDK not found` | Set `-DPYLON_ROOT=` to your install prefix |
 | No camera found | USB cable, `install_udev`, camera powered |
 | No valid tracks after warmup | Lighting, gain, arena mask / ignore_regions, animal area priors in `arena_experiment.json` |
-| Motor connect failed in arena_experiment | CAN interface up? `sudo ip link set can0 up type can bitrate 250000`; run `calibrate_odrive.py` first |
+| Motor connect failed in arena_experiment | CAN interface up? `sudo ip link set can0 up type can bitrate 250000`; run `src/motor/calibrate_odrive.py` first |
 | `pip install odrive` fails | Use a venv; ODrive S1 needs recent `odrive` package from PyPI |
 | Low frame rate | AOI size, `DeviceLinkThroughputLimitMode`, USB3 port |
 | High jitter | `make run_rt`, CPU isolation, reduce pipeline load |
