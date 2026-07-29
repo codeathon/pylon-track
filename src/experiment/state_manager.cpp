@@ -3,7 +3,6 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
-#include <future>
 #include <sstream>
 
 #include <pylon/PylonIncludes.h>
@@ -70,7 +69,6 @@ const char* experiment_phase_name(ExperimentPhase phase) {
 	switch (phase) {
 	case ExperimentPhase::Idle: return "idle";
 	case ExperimentPhase::Setup: return "setup";
-	case ExperimentPhase::Calibrating: return "calibrating";
 	case ExperimentPhase::Configuring: return "configuring";
 	case ExperimentPhase::Streaming: return "streaming";
 	case ExperimentPhase::ChaseSession: return "chase_session";
@@ -120,87 +118,50 @@ bool ExperimentStateManager::phase_setup() {
 	return true;
 }
 
-bool ExperimentStateManager::calibrate_camera() {
-	readiness_.camera = ComponentStatus::Calibrating;
-	if (opts_.disable_calib) {
-		readiness_.camera = ComponentStatus::Ready;
-		log_info("experiment", "Camera calib skipped (--no-calib)");
-		return true;
+bool ExperimentStateManager::verify_setup_artifacts() {
+	if (!opts_.disable_calib) {
+		const std::string calib_path = resolve_calib_path(opts_.argv0, opts_.calib_path);
+		if (calib_path.empty()) {
+			log_error("experiment",
+				"calib.npz not found — run: arena_experiment setup --config <path>");
+			readiness_.camera = ComponentStatus::Error;
+			return false;
+		}
+		log_info("experiment", "Lens calibration found: " + calib_path);
 	}
-	const std::string calib_path = resolve_calib_path(opts_.argv0, opts_.calib_path);
-	if (calib_path.empty()) {
-		log_error("experiment", "calib.npz not found — use --calib or place beside executable");
-		readiness_.camera = ComponentStatus::Error;
+	if (cfg_.motor.chain_mm_per_motor_turn <= 0.0f) {
+		log_error("experiment",
+			"motor.chain_mm_per_motor_turn missing — run setup (odrive step)");
+		readiness_.motor = ComponentStatus::Error;
 		return false;
 	}
-	log_info("experiment", "Camera calibration found: " + calib_path);
+	if (cfg_.vision.mask.ignore_regions.empty()) {
+		log_info("experiment",
+			"Warning: no ignore_regions — mark pulleys/chains in setup (arena step)");
+	}
 	readiness_.camera = ComponentStatus::Ready;
 	return true;
 }
 
-bool ExperimentStateManager::calibrate_motor() {
+bool ExperimentStateManager::connect_runtime_hardware() {
 	readiness_.motor = ComponentStatus::Calibrating;
-	if (opts_.skip_motor_test) {
+	if (prey_motor_->connect()) {
 		readiness_.motor = ComponentStatus::Ready;
-		log_info("experiment", "Motor test skipped (--skip-motor-test)");
-		return true;
-	}
-	if (!prey_motor_->connect()) {
-		log_error("experiment", "Prey motor connect failed");
+		log_info("experiment", "Prey motor connected");
+	} else {
+		log_error("experiment", "Prey motor connect failed — chase disabled");
 		readiness_.motor = ComponentStatus::Error;
-		return false;
 	}
-	const auto status = prey_motor_->status();
-	if (!status.heartbeat_ok) {
-		log_error("experiment", "Prey motor heartbeat check failed");
-		readiness_.motor = ComponentStatus::Error;
-		return false;
-	}
-	const bool move_ok = motion_planner_->move_distance_mm_in_time(
-		*prey_motor_, 50.0f, 2000, 0.5f);
-	if (!move_ok) {
-		log_error("experiment", "Prey motor self-test move failed");
-		readiness_.motor = ComponentStatus::Error;
-		return false;
-	}
-	readiness_.motor = ComponentStatus::Ready;
-	log_info("experiment", "Prey motor calibrated and self-tested");
-	return true;
-}
 
-bool ExperimentStateManager::calibrate_trap_door() {
 	readiness_.trap_door = ComponentStatus::Calibrating;
-	if (!trap_motor_->connect()) {
+	if (trap_motor_->connect()) {
+		readiness_.trap_door = ComponentStatus::Ready;
+		log_info("experiment", "Trap door ready (" + cfg_.trap_door.backend + ")");
+	} else if (cfg_.trap_door.backend == "noop") {
+		readiness_.trap_door = ComponentStatus::Ready;
+	} else {
 		log_error("experiment", "Trap door connect failed");
 		readiness_.trap_door = ComponentStatus::Error;
-		return cfg_.trap_door.backend == "noop";
-	}
-	readiness_.trap_door = ComponentStatus::Ready;
-	log_info("experiment", "Trap door ready (" + cfg_.trap_door.backend + ")");
-	return true;
-}
-
-bool ExperimentStateManager::phase_calibrating() {
-	phase_ = ExperimentPhase::Calibrating;
-	auto camera_fut = std::async(std::launch::async,
-		[this]() { return calibrate_camera(); });
-	auto motor_fut = std::async(std::launch::async,
-		[this]() { return calibrate_motor(); });
-	auto trap_fut = std::async(std::launch::async,
-		[this]() { return calibrate_trap_door(); });
-
-	const bool camera_ok = camera_fut.get();
-	const bool motor_ok = motor_fut.get();
-	const bool trap_ok = trap_fut.get();
-	if (!camera_ok) {
-		phase_ = ExperimentPhase::Error;
-		return false;
-	}
-	if (!motor_ok) {
-		log_error("experiment", "Motor not ready — chase will be disabled");
-	}
-	if (!trap_ok) {
-		log_error("experiment", "Trap door not ready");
 	}
 	return true;
 }
@@ -246,6 +207,8 @@ bool ExperimentStateManager::phase_configuring() {
 		tracking_->set_session_recorder(recorder_.get());
 		camera_->RegisterImageEventHandler(tracking_.get(),
 			RegistrationMode_Append, Cleanup_None);
+
+		connect_runtime_hardware();
 
 		trial_fsm_->begin_warmup();
 		camera_->StartGrabbing(GrabStrategy_LatestImageOnly,
@@ -417,7 +380,7 @@ int ExperimentStateManager::run(std::atomic<bool>& running) {
 	PylonInitialize();
 	int exit_code = 0;
 	try {
-		if (!phase_setup() || !phase_calibrating() || !phase_configuring()) {
+		if (!phase_setup() || !verify_setup_artifacts() || !phase_configuring()) {
 			exit_code = 1;
 		} else {
 			if (opts_.enable_display && tracking_) {

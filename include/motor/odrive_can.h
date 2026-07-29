@@ -25,6 +25,12 @@ public:
 	bool send_estop();
 	bool check_heartbeat();
 
+	// CANSimple setup — used by ODriveCalibrator during one-time setup.
+	bool set_axis_state(uint32_t requested_state);
+	bool set_controller_mode(int32_t control_mode, int32_t input_mode = 1);
+	bool get_axis_state(uint32_t& axis_error, uint32_t& axis_state);
+	bool enter_velocity_mode(int timeout_ms = 10000);
+
 	uint8_t node_id() const { return cfg_.node_id; }
 
 private:

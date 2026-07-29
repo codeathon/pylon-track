@@ -125,3 +125,99 @@ bool load_arena_experiment_config(const std::string& path, ArenaExperimentConfig
 		return false;
 	}
 }
+
+namespace {
+
+nlohmann::json points_to_json(const std::vector<cv::Point>& points) {
+	nlohmann::json arr = nlohmann::json::array();
+	for (const auto& pt : points) {
+		arr.push_back({pt.x, pt.y});
+	}
+	return arr;
+}
+
+nlohmann::json mask_to_vision_json(const ArenaMaskConfig& mask) {
+	nlohmann::json vision;
+	nlohmann::json regions = nlohmann::json::array();
+	for (const auto& region : mask.ignore_regions) {
+		if (region.points.size() >= 3) {
+			regions.push_back({{"points", points_to_json(region.points)}});
+		}
+	}
+	vision["ignore_regions"] = regions;
+	if (mask.has_track_roi && mask.track_roi.size() >= 3) {
+		vision["track_roi"] = {{"points", points_to_json(mask.track_roi)}};
+	} else {
+		vision["track_roi"] = nullptr;
+	}
+	return vision;
+}
+
+bool merge_write_json_section(const std::string& path,
+	const char* section, nlohmann::json section_json)
+{
+	std::ifstream in(path);
+	if (!in.is_open()) {
+		log_error("experiment", "Cannot open config for write: " + path);
+		return false;
+	}
+	nlohmann::json root;
+	try {
+		in >> root;
+	} catch (const std::exception& e) {
+		log_error("experiment", std::string("Config parse error: ") + e.what());
+		return false;
+	}
+	in.close();
+	root[section] = section_json;
+	std::ofstream out(path);
+	if (!out.is_open()) {
+		log_error("experiment", "Cannot write config: " + path);
+		return false;
+	}
+	out << root.dump(1, '\t') << '\n';
+	log_info("experiment", "Wrote " + std::string(section) + " → " + path);
+	return true;
+}
+
+} // namespace
+
+bool save_arena_vision_masks(const std::string& path, const ArenaMaskConfig& mask) {
+	nlohmann::json vision = mask_to_vision_json(mask);
+	std::ifstream in(path);
+	if (!in.is_open()) {
+		return false;
+	}
+	nlohmann::json root;
+	try {
+		in >> root;
+	} catch (const std::exception& e) {
+		log_error("experiment", std::string("Config parse error: ") + e.what());
+		return false;
+	}
+	in.close();
+	if (root.contains("vision") && root["vision"].is_object()) {
+		for (auto it = vision.begin(); it != vision.end(); ++it) {
+			root["vision"][it.key()] = it.value();
+		}
+	} else {
+		root["vision"] = vision;
+	}
+	std::ofstream out(path);
+	if (!out.is_open()) {
+		return false;
+	}
+	out << root.dump(1, '\t') << '\n';
+	log_info("experiment", "Wrote vision masks → " + path);
+	return true;
+}
+
+bool save_motor_calibration(const std::string& path, const MotorConfig& motor) {
+	nlohmann::json m;
+	m["can_interface"] = motor.can_interface;
+	m["node_id"] = motor.node_id;
+	m["pulley_radius_m"] = motor.pulley_radius_m;
+	m["chain_direction_sign"] = motor.chain_direction_sign;
+	m["chain_mm_per_motor_turn"] = motor.chain_mm_per_motor_turn;
+	return merge_write_json_section(path, "motor", m);
+}

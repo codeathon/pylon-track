@@ -33,20 +33,35 @@ benchmarks two-object tracking latency, and validates mounting height — see
 
 ### Arena experiment (`arena_experiment`)
 
-`ExperimentStateManager` runs the full closed-loop workflow:
+Two subcommands — **one-time setup** vs **per-session run**:
 
-1. **Setup** — load `arena_experiment.json`, open session CSVs under `sessions/`
-2. **Calibrating** (parallel) — camera calib check, ODrive prey motor self-test, trap door connect
-3. **Configuring** — start Pylon grab + tracking pipeline
-4. **Streaming** — verify ferret/prey identification (30 stable frames)
-5. **Chase session** — operator presses **`s`** to start trial; `ChaseController` drives prey chain speed from live tracking
-6. **`e`** end trial, **`r`** reset to armed
+| Subcommand | When | What it does |
+|------------|------|----------------|
+| **`setup`** | New rig / hardware change | Bundled C++ setup: arena masks, ChArUco lens, ODrive chain (CAN), LabJack trap |
+| **`run`** | Every experiment session | Load artifacts, stream camera, record CSVs, chase trials |
+
+**Setup** (once, interactive — requires `--display`):
 
 ```bash
+./build/bin/arena_experiment setup --config config/arena_experiment.json --display
+```
+
+Steps run in order: arena masks → camera lens → ODrive chain → LabJack trap.  
+Re-run one step: `--only arena|camera|odrive|labjack`.
+
+**Run** (each session):
+
+```bash
+sudo ip link set can0 up type can bitrate 250000   # if using prey motor
 ./build/bin/arena_experiment run --config config/arena_experiment.json --session sessions
 ```
 
-Use `--skip-motor-test` for camera-only bring-up without CAN hardware.
+Per-session flow:
+
+1. **Setup** — load config, verify `calib.npz` + motor constants from prior `setup`
+2. **Configuring** — start Pylon grab + tracking pipeline, connect motor/trap
+3. **Streaming** — MOG2 warmup 30 s (empty arena), ferret/prey identification
+4. **Chase session** — **`s`** start trial, **`e`** end, **`r`** reset
 
 Example line:
 
@@ -63,18 +78,21 @@ pylon-track/
 │   └── arena_experiment.json   Chase policy, motor, vision masks, trap door
 ├── include/
 │   ├── camera/                 Camera config + lens calib
+│   ├── calibrate/              SetupRunner + one-time rig calibrators
 │   ├── experiment/           State manager, session recorder, trial FSM
 │   ├── log/
 │   ├── motor/                  ODrive CAN, chase policy, LabJack trap door
 │   ├── tracker/                FerretTracker wrapper, display
 │   └── vision/                 Pipeline, associator, arena mask
 ├── src/
-│   ├── arena_experiment_main.cpp   Experiment entry point
+│   ├── arena_experiment_main.cpp   setup | run entry point
+│   ├── calibrate/                  One-time setup (arena, camera, ODrive, LabJack)
 │   ├── main.cpp                    ferret_tracker entry point
 │   ├── camera/
+│   ├── calibrate/              One-time setup (arena, camera, ODrive, LabJack)
 │   ├── experiment/
 │   ├── log/
-│   ├── motor/                  C++ drivers + calibrate_odrive.py
+│   ├── motor/                  ODrive CAN, chase policy, LabJack trap door
 │   ├── tracker/
 │   └── vision/
 ├── tests/                    Camera calibration suite (hardware-in-the-loop)
@@ -96,7 +114,7 @@ All four are required before `cmake` will succeed:
 |---------|---------|-------------------------|
 | **build-essential** | C++17 compiler, `make`, linker | `build-essential` |
 | **cmake** | Configure the project (≥ 3.16) | `cmake` |
-| **OpenCV (dev)** | MOG2, contours, Kalman (`core`, `imgproc`, `video`) | `libopencv-dev` |
+| **OpenCV (dev + contrib)** | MOG2, ChArUco setup, contours, Kalman | `libopencv-dev` `libopencv-contrib-dev` |
 | **Basler pylon SDK** | Camera grab + GenICam API | [Install from Basler](https://www.baslerweb.com/en/software/pylon/) → default `/opt/pylon` |
 
 ### Hardware
@@ -110,7 +128,7 @@ All four are required before `cmake` will succeed:
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential cmake libopencv-dev zlib1g-dev nlohmann-json3-dev
+sudo apt install -y build-essential cmake libopencv-dev libopencv-contrib-dev zlib1g-dev nlohmann-json3-dev
 ```
 
 `nlohmann-json3-dev` is optional but avoids CMake downloading json during configure.
@@ -173,15 +191,10 @@ cmake -DOpenCV_DIR=/usr/lib/x86_64-linux-gnu/cmake/opencv4 -DPYLON_ROOT=/opt/pyl
 ### Arena experiment (closed-loop chase)
 
 ```bash
-# 1. Lens calib (once)
-python src/camera/calibration.py --calibrate
-cp calib.npz build/bin/
+# One-time rig setup (arena masks, ChArUco lens, ODrive chain, LabJack trap)
+./build/bin/arena_experiment setup --config config/arena_experiment.json --display
 
-# 2. ODrive chain calib over USB (once) — writes config/arena_experiment.json
-pip install odrive
-python src/motor/calibrate_odrive.py --config config/arena_experiment.json
-
-# 3. Enable CAN on the experiment PC, then run
+# Each experiment session
 sudo ip link set can0 up type can bitrate 250000
 ./build/bin/arena_experiment run \
   --config config/arena_experiment.json \
@@ -190,12 +203,12 @@ sudo ip link set can0 up type can bitrate 250000
 
 | Flag | Effect |
 |------|--------|
-| `--display` | Live OpenCV overlay (requires `DISPLAY`) |
-| `--skip-motor-test` | Skip ODrive connect/self-test (camera-only) |
+| `--display` | Required for `setup` (arena + camera capture windows) |
+| `--only <step>` | Run one setup step: `arena`, `camera`, `odrive`, `labjack` |
 | `--verbose` | Debug logging |
-| `--no-calib` | Skip lens undistort |
+| `--no-calib` | `run` without lens undistort (dev only) |
 | `--camera-config PATH` | Override camera JSON |
-| `--calib PATH` | Override `calib.npz` |
+| `--calib PATH` | Override `calib.npz` path |
 
 Operator keys during experiment: **`s`** start chase trial, **`e`** end, **`r`** reset.
 
@@ -211,26 +224,24 @@ Session output: `sessions/arena_experiment/<timestamp>/telemetry.csv` + `events.
 | `chase_policy` | `threat_distance_mm`, `cone_half_angle_deg`, speed limits | Cone-of-impact flee policy |
 | `trial` | `timeout_s` | Trial timeout (future use) |
 
-Mark pulley/chain exclusion zones in `ignore_regions` (polygon points in image pixels).
+Mark pulley/chain exclusion zones in `ignore_regions` using the interactive **arena** setup step (`setup --only arena`).
 
-### ODrive motor calibration (`src/motor/calibrate_odrive.py`)
+### One-time setup details (`arena_experiment setup`)
 
-One-time USB setup before CAN runtime. Measures how many millimeters of chain
-travel correspond to one motor revolution and confirms direction sign:
+All setup is C++ — no Python dependencies.
 
-```bash
-pip install odrive
-python src/motor/calibrate_odrive.py --config config/arena_experiment.json
-```
+| Step | Keys / prompts | Writes |
+|------|----------------|--------|
+| **Arena** | `i` ignore region, `r` track ROI, LMB vertex, RMB close, `s` save, `q` quit | `vision.ignore_regions`, `vision.track_roi` in JSON |
+| **Camera** | SPACE save ChArUco frame, `q` quit (~20 frames), then auto-calibrate | `calib.npz` beside executable |
+| **ODrive** | CAN must be up; measure chain travel (mm), confirm direction | `motor.*` in JSON |
+| **LabJack** | Open/close trap; confirm motion | validates wiring (noop backend skips) |
 
-The script updates `motor.chain_mm_per_motor_turn`, `motor.pulley_radius_m`, and
-`motor.chain_direction_sign` in the JSON. Runtime experiments use C++ `PreyMotor`
-over SocketCAN — not USB.
-
-Print CAN bring-up steps without connecting:
+ODrive chain setup uses **SocketCAN** (same path as runtime chase). Ensure CAN is enabled on the drive (odrivetool/Web GUI once), then:
 
 ```bash
-python src/motor/calibrate_odrive.py --dry-run --config config/arena_experiment.json
+sudo ip link set can0 up type can bitrate 250000
+./build/bin/arena_experiment setup --config config/arena_experiment.json --only odrive
 ```
 
 Build with LabJack trap-door support (optional):
@@ -280,16 +291,9 @@ Default lookup: `camera_config.json` next to the executable (`build/bin/`), then
 
 ### Lens calibration (`calib.npz`)
 
-ChArUco intrinsics from [`src/camera/calibration.py`](src/camera/calibration.py) correct wide-angle distortion before tracking:
+Written by `arena_experiment setup` (camera step). ChArUco intrinsics correct wide-angle distortion before tracking.
 
-```bash
-python src/camera/calibration.py --make-board
-python src/camera/calibration.py --capture      # SPACE saves frames, q quits
-python src/camera/calibration.py --calibrate    # writes calib.npz (repo root)
-cp calib.npz build/bin/              # or set PYLON_CAMERA_CALIB
-```
-
-`ferret_tracker` auto-loads `calib.npz` beside the executable (or `./calib.npz` from cwd). Override or disable:
+`ferret_tracker` and `arena_experiment run` auto-load `calib.npz` beside the executable (or `./calib.npz` from cwd). Override or disable:
 
 ```bash
 ./build/bin/ferret_tracker --calib /path/to/calib.npz
@@ -407,7 +411,7 @@ stdout telemetry or session CSV
 CameraTrackingService ──► TrackingFrame ──► ChaseController ──► PreyMotor (SocketCAN)
         │                                        ▲
         └─ SessionRecorder (telemetry.csv)       └── chase_policy (cone-of-impact)
-ExperimentStateManager orchestrates: calibrate → stream → chase trial
+ExperimentStateManager orchestrates: setup artifacts → stream → chase trial
 ```
 
 ## Calibration and testing
@@ -609,8 +613,7 @@ metric interpretation.
 | `pylon SDK not found` | Set `-DPYLON_ROOT=` to your install prefix |
 | No camera found | USB cable, `install_udev`, camera powered |
 | No valid tracks after warmup | Lighting, gain, arena mask / ignore_regions, animal area priors in `arena_experiment.json` |
-| Motor connect failed in arena_experiment | CAN interface up? `sudo ip link set can0 up type can bitrate 250000`; run `src/motor/calibrate_odrive.py` first |
-| `pip install odrive` fails | Use a venv; ODrive S1 needs recent `odrive` package from PyPI |
+| Motor connect failed in arena_experiment | CAN up? `sudo ip link set can0 up type can bitrate 250000`; run `arena_experiment setup --only odrive` |
 | Low frame rate | AOI size, `DeviceLinkThroughputLimitMode`, USB3 port |
 | High jitter | `make run_rt`, CPU isolation, reduce pipeline load |
 | Calibration tools missing after build | Ensure `BUILD_CALIBRATION_TESTS=ON` (default); run `make` not only `make ferret_tracker` |

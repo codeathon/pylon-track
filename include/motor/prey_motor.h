@@ -24,6 +24,12 @@ public:
 	void estop() override;
 	MotorStatus status() const override;
 
+	bool enter_velocity_mode(int timeout_ms = 10000);
+
+	// Raw motor turns/s — used by ODriveCalibrator before chain constants are known.
+	bool set_velocity_turns_s(float turns_s);
+	float read_position_turns() const;
+
 	// Chain ↔ motor unit conversions (public for motion planner + calibration).
 	float chain_mps_to_turns_s(float chain_mps) const;
 	float turns_s_to_chain_mps(float turns_s) const;

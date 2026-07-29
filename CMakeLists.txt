@@ -56,6 +56,16 @@ set(MOTOR_SOURCES
 	src/motor/chase_controller.cpp
 )
 
+set(CALIBRATE_SOURCES
+	src/calibrate/setup_util.cpp
+	src/calibrate/setup_runner.cpp
+	src/calibrate/arena_calibrator.cpp
+	src/calibrate/camera_calibrator.cpp
+	src/calibrate/odrive_calibrator.cpp
+	src/calibrate/labjack_calibrator.cpp
+	src/calibrate/charuco_board.cpp
+)
+
 # ── Optional LabJack LJM (trap door DIO) ─────────────────────────────────────
 option(ENABLE_LABJACK "Link LabJack LJM for trap door control" ON)
 set(LJM_ROOT "/usr/local/lib" CACHE PATH "LabJack LJM library directory")
@@ -82,7 +92,7 @@ if(NOT OpenCV_DIR AND DEFINED ENV{OpenCV_DIR})
 	set(OpenCV_DIR "$ENV{OpenCV_DIR}" CACHE PATH "OpenCV cmake config directory")
 endif()
 
-find_package(OpenCV QUIET COMPONENTS core imgproc video highgui calib3d)
+find_package(OpenCV QUIET COMPONENTS core imgproc video highgui calib3d imgcodecs)
 
 if(NOT OpenCV_FOUND)
 	# Probe common install locations before failing with a helpful message.
@@ -94,7 +104,7 @@ if(NOT OpenCV_FOUND)
 	)
 		if(EXISTS "${_opencv_cmake_dir}/OpenCVConfig.cmake")
 			set(OpenCV_DIR "${_opencv_cmake_dir}" CACHE PATH "OpenCV cmake config directory" FORCE)
-			find_package(OpenCV QUIET COMPONENTS core imgproc video highgui calib3d)
+			find_package(OpenCV QUIET COMPONENTS core imgproc video highgui calib3d imgcodecs)
 			if(OpenCV_FOUND)
 				break()
 			endif()
@@ -104,16 +114,23 @@ endif()
 
 if(NOT OpenCV_FOUND)
 	message(FATAL_ERROR
-		"OpenCV not found (need components: core, imgproc, video, highgui, calib3d).\n"
-		"  Ubuntu/Debian:  sudo apt update && sudo apt install -y libopencv-dev build-essential cmake\n"
+		"OpenCV not found (need components: core, imgproc, video, highgui, calib3d, imgcodecs).\n"
+		"  Ubuntu/Debian:  sudo apt update && sudo apt install -y libopencv-dev libopencv-contrib-dev\n"
 		"  Then reconfigure, or set OpenCV_DIR explicitly, e.g.:\n"
 		"    cmake -DOpenCV_DIR=/usr/lib/x86_64-linux-gnu/cmake/opencv4 ..")
+endif()
+
+find_path(PYLON_TRACK_ARUCO_INCLUDE opencv2/aruco.hpp
+	HINTS ${OpenCV_INCLUDE_DIRS})
+if(NOT PYLON_TRACK_ARUCO_INCLUDE)
+	message(FATAL_ERROR
+		"OpenCV aruco module not found — install libopencv-contrib-dev (ChArUco camera setup)")
 endif()
 
 message(STATUS "OpenCV version : ${OpenCV_VERSION}")
 message(STATUS "OpenCV includes: ${OpenCV_INCLUDE_DIRS}")
 
-# ── cnpy (read src/camera/calibration.py calib.npz; vendored — no FetchContent/git) ──
+# ── cnpy (read/write calib.npz from setup; vendored — no FetchContent/git) ──
 find_package(ZLIB REQUIRED)
 add_library(cnpy STATIC third_party/cnpy/cnpy.cpp)
 target_include_directories(cnpy PUBLIC third_party/cnpy)
@@ -162,6 +179,7 @@ if(UNIX)
 	add_executable(arena_experiment
 		src/arena_experiment_main.cpp
 		${ARENA_PIPELINE_SOURCES}
+		${CALIBRATE_SOURCES}
 	)
 
 	add_library(arena_motor STATIC ${MOTOR_SOURCES})

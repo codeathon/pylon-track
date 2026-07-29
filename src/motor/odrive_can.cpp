@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstring>
 #include <poll.h>
+#include <thread>
 #include <unistd.h>
 
 #include <linux/can.h>
@@ -20,6 +21,12 @@ constexpr uint16_t CMD_HEARTBEAT = 0x001;
 constexpr uint16_t CMD_ESTOP = 0x002;
 constexpr uint16_t CMD_GET_ENCODER_ESTIMATES = 0x009;
 constexpr uint16_t CMD_SET_INPUT_VEL = 0x00d;
+constexpr uint16_t CMD_SET_AXIS_STATE = 0x007;
+constexpr uint16_t CMD_SET_CONTROLLER_MODE = 0x00b;
+
+constexpr uint32_t AXIS_STATE_CLOSED_LOOP_CONTROL = 8;
+constexpr int32_t CONTROL_MODE_VELOCITY_CONTROL = 2;
+constexpr int32_t INPUT_MODE_PASSTHROUGH = 1;
 
 void pack_float_le(float value, uint8_t* out) {
 	std::memcpy(out, &value, sizeof(float));
@@ -149,4 +156,54 @@ bool ODriveCan::check_heartbeat() {
 	}
 	uint8_t buf[8] = {};
 	return recv_frame(CMD_HEARTBEAT, buf, sizeof(buf));
+}
+
+bool ODriveCan::set_axis_state(uint32_t requested_state) {
+	uint8_t buf[8] = {};
+	std::memcpy(buf, &requested_state, sizeof(uint32_t));
+	return send_frame(CMD_SET_AXIS_STATE, buf, sizeof(uint32_t));
+}
+
+bool ODriveCan::set_controller_mode(int32_t control_mode, int32_t input_mode) {
+	uint8_t buf[8] = {};
+	std::memcpy(buf, &control_mode, sizeof(int32_t));
+	std::memcpy(buf + 4, &input_mode, sizeof(int32_t));
+	return send_frame(CMD_SET_CONTROLLER_MODE, buf, sizeof(buf));
+}
+
+bool ODriveCan::get_axis_state(uint32_t& axis_error, uint32_t& axis_state) {
+	if (!send_frame(CMD_HEARTBEAT, nullptr, 0)) {
+		return false;
+	}
+	uint8_t buf[8] = {};
+	if (!recv_frame(CMD_HEARTBEAT, buf, sizeof(buf))) {
+		return false;
+	}
+	std::memcpy(&axis_error, buf, sizeof(uint32_t));
+	std::memcpy(&axis_state, buf + 4, sizeof(uint32_t));
+	return true;
+}
+
+bool ODriveCan::enter_velocity_mode(int timeout_ms) {
+	if (!set_controller_mode(CONTROL_MODE_VELOCITY_CONTROL, INPUT_MODE_PASSTHROUGH)) {
+		log_error("motor", "Set controller mode failed");
+		return false;
+	}
+	if (!set_axis_state(AXIS_STATE_CLOSED_LOOP_CONTROL)) {
+		log_error("motor", "Set axis state failed");
+		return false;
+	}
+	const auto deadline = std::chrono::steady_clock::now()
+		+ std::chrono::milliseconds(timeout_ms);
+	while (std::chrono::steady_clock::now() < deadline) {
+		uint32_t err = 0;
+		uint32_t state = 0;
+		if (get_axis_state(err, state) && state == AXIS_STATE_CLOSED_LOOP_CONTROL) {
+			log_info("motor", "ODrive axis in closed-loop velocity mode");
+			return true;
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	}
+	log_error("motor", "Timed out waiting for closed-loop control");
+	return false;
 }

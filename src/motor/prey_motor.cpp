@@ -109,3 +109,24 @@ MotorStatus PreyMotor::status() const {
 	refresh_status();
 	return status_;
 }
+
+bool PreyMotor::enter_velocity_mode(int timeout_ms) {
+	if (!status_.connected) {
+		return false;
+	}
+	return can_.enter_velocity_mode(timeout_ms);
+}
+
+bool PreyMotor::set_velocity_turns_s(float turns_s) {
+	if (!status_.connected) {
+		return false;
+	}
+	const bool ok = can_.set_input_velocity(turns_s, 0.0f);
+	refresh_status();
+	return ok;
+}
+
+float PreyMotor::read_position_turns() const {
+	refresh_status();
+	return status_.position_turns;
+}

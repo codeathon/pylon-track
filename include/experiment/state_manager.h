@@ -21,7 +21,6 @@ enum class ComponentStatus : uint8_t {
 enum class ExperimentPhase : uint8_t {
 	Idle,
 	Setup,
-	Calibrating,
 	Configuring,
 	Streaming,
 	ChaseSession,
@@ -49,11 +48,10 @@ struct ExperimentOptions {
 	bool disable_calib = false;
 	bool enable_display = false;
 	bool verbose = false;
-	bool skip_motor_test = false;
 	std::string log_file;
 };
 
-// Orchestrates setup → calibration → camera stream → chase session.
+// Per-session experiment orchestrator (run subcommand only).
 class ExperimentStateManager {
 public:
 	explicit ExperimentStateManager(ExperimentOptions opts);
@@ -96,14 +94,12 @@ private:
 	bool shutdown_done_ = false;
 
 	bool phase_setup();
-	bool phase_calibrating();
 	bool phase_configuring();
 	void main_loop(std::atomic<bool>& running);
 	void shutdown();
 
-	bool calibrate_camera();
-	bool calibrate_motor();
-	bool calibrate_trap_door();
+	bool verify_setup_artifacts();
+	bool connect_runtime_hardware();
 
 	void start_operator_thread();
 	void start_chase_feed_thread();

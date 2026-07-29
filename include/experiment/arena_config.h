@@ -41,3 +41,9 @@ struct ArenaExperimentConfig {
 };
 
 bool load_arena_experiment_config(const std::string& path, ArenaExperimentConfig& out);
+
+// Merge-write vision masks without clobbering other JSON sections.
+bool save_arena_vision_masks(const std::string& path, const ArenaMaskConfig& mask);
+
+// Merge-write motor chain calibration fields.
+bool save_motor_calibration(const std::string& path, const MotorConfig& motor);

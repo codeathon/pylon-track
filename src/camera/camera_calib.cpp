@@ -8,6 +8,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <cstdlib>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -194,5 +195,59 @@ std::optional<CameraCalib> load_camera_calib(const std::string& path,
 	} catch (const std::exception& e) {
 		log_error("calib", std::string("Failed to load ") + path + ": " + e.what());
 		return std::nullopt;
+	}
+}
+
+namespace {
+
+void save_mat64_npz(const std::string& path, const std::string& key,
+	const cv::Mat& mat, const std::string& mode)
+{
+	cv::Mat dmat;
+	mat.convertTo(dmat, CV_64F);
+	std::vector<size_t> shape;
+	if (dmat.rows == 1 || dmat.cols == 1) {
+		shape = {static_cast<size_t>(dmat.total())};
+	} else {
+		shape = {static_cast<size_t>(dmat.rows), static_cast<size_t>(dmat.cols)};
+	}
+	cnpy::npz_save(path, key,
+		reinterpret_cast<const double*>(dmat.ptr()), shape, mode);
+}
+
+void save_scalar_npz(const std::string& path, const std::string& key,
+	double value, const std::string& mode)
+{
+	const double v = value;
+	std::vector<size_t> shape = {1};
+	cnpy::npz_save(path, key, &v, shape, mode);
+}
+
+} // namespace
+
+bool save_camera_calib(const std::string& path, const CameraCalib& calib) {
+	if (calib.camera_matrix.empty() || calib.dist_coeffs.empty()) {
+		log_error("calib", "save_camera_calib: empty intrinsics");
+		return false;
+	}
+	try {
+		const std::string mode = "w";
+		save_mat64_npz(path, "K", calib.camera_matrix, mode);
+		save_mat64_npz(path, "dist", calib.dist_coeffs, mode);
+		const double img_size[2] = {
+			static_cast<double>(calib.image_size.width),
+			static_cast<double>(calib.image_size.height)
+		};
+		std::vector<size_t> sz_shape = {2};
+		cnpy::npz_save(path, "img_size", img_size, sz_shape, "a");
+		save_scalar_npz(path, "rms", calib.rms, "a");
+		save_scalar_npz(path, "model_id",
+			static_cast<double>(static_cast<int>(calib.model)), "a");
+		save_scalar_npz(path, "undistort_alpha", calib.undistort_alpha, "a");
+		log_info("calib", "Saved " + path);
+		return true;
+	} catch (const std::exception& e) {
+		log_error("calib", std::string("save_camera_calib failed: ") + e.what());
+		return false;
 	}
 }
