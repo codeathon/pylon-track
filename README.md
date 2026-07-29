@@ -77,22 +77,21 @@ pylon-track/
 ├── config/
 │   └── arena_experiment.json   Chase policy, motor, vision masks, trap door
 ├── include/
-│   ├── camera/                 Camera config + lens calib
-│   ├── calibrate/              SetupRunner + one-time rig calibrators
-│   ├── experiment/           State manager, session recorder, trial FSM
+│   ├── calibrate/              SetupRunner + one-time calibrators
+│   ├── camera/                 Camera config + lens calib loader
+│   ├── experiment/             State manager, session recorder, trial FSM
 │   ├── log/
-│   ├── motor/                  ODrive CAN, chase policy, LabJack trap door
+│   ├── motor/                  ODrive CAN, chase policy, LabJack trap
 │   ├── tracker/                FerretTracker wrapper, display
 │   └── vision/                 Pipeline, associator, arena mask
 ├── src/
-│   ├── arena_experiment_main.cpp   setup | run entry point
-│   ├── calibrate/                  One-time setup (arena, camera, ODrive, LabJack)
-│   ├── main.cpp                    ferret_tracker entry point
+│   ├── arena_experiment_main.cpp   setup | run entry
+│   ├── main.cpp                    ferret_tracker entry
+│   ├── calibrate/                  Arena, camera, ODrive, LabJack setup
 │   ├── camera/
-│   ├── calibrate/              One-time setup (arena, camera, ODrive, LabJack)
 │   ├── experiment/
 │   ├── log/
-│   ├── motor/                  ODrive CAN, chase policy, LabJack trap door
+│   ├── motor/
 │   ├── tracker/
 │   └── vision/
 ├── tests/                    Camera calibration suite (hardware-in-the-loop)
