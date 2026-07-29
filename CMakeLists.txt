@@ -22,15 +22,53 @@ endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # ── Sources ───────────────────────────────────────────────────────────────────
-set(SOURCES
-	src/main.cpp
+set(ARENA_PIPELINE_SOURCES
 	src/camera/camera_config.cpp
 	src/camera/camera_calib.cpp
 	src/tracker/tracker.cpp
 	src/tracker/ferret_tracker.cpp
 	src/tracker/display.cpp
 	src/log/logger.cpp
+	src/experiment/trial_state.cpp
+	src/experiment/arena_config.cpp
+	src/experiment/session_recorder.cpp
+	src/experiment/state_manager.cpp
+	src/vision/camera_frame.cpp
+	src/vision/tracking_frame.cpp
+	src/vision/arena_mask.cpp
+	src/vision/object_associator.cpp
+	src/vision/tracking_pipeline.cpp
+	src/vision/camera_tracking_service.cpp
 )
+
+set(SOURCES
+	src/main.cpp
+	${ARENA_PIPELINE_SOURCES}
+)
+
+set(MOTOR_SOURCES
+	src/motor/odrive_can.cpp
+	src/motor/prey_motor.cpp
+	src/motor/motion_planner.cpp
+	src/motor/labjack_io.cpp
+	src/motor/trap_door_motor.cpp
+	src/motor/chase_policy.cpp
+	src/motor/chase_controller.cpp
+)
+
+set(CALIBRATE_SOURCES
+	src/calibrate/setup_util.cpp
+	src/calibrate/setup_runner.cpp
+	src/calibrate/arena_calibrator.cpp
+	src/calibrate/camera_calibrator.cpp
+	src/calibrate/odrive_calibrator.cpp
+	src/calibrate/labjack_calibrator.cpp
+	src/calibrate/charuco_board.cpp
+)
+
+# ── Optional LabJack LJM (trap door DIO) ─────────────────────────────────────
+option(ENABLE_LABJACK "Link LabJack LJM for trap door control" ON)
+set(LJM_ROOT "/usr/local/lib" CACHE PATH "LabJack LJM library directory")
 
 # ── Compiler flags ────────────────────────────────────────────────────────────
 add_compile_options(-O3 -march=native -Wall -Wextra)
@@ -54,7 +92,7 @@ if(NOT OpenCV_DIR AND DEFINED ENV{OpenCV_DIR})
 	set(OpenCV_DIR "$ENV{OpenCV_DIR}" CACHE PATH "OpenCV cmake config directory")
 endif()
 
-find_package(OpenCV QUIET COMPONENTS core imgproc video highgui calib3d)
+find_package(OpenCV QUIET COMPONENTS core imgproc video highgui calib3d imgcodecs)
 
 if(NOT OpenCV_FOUND)
 	# Probe common install locations before failing with a helpful message.
@@ -66,7 +104,7 @@ if(NOT OpenCV_FOUND)
 	)
 		if(EXISTS "${_opencv_cmake_dir}/OpenCVConfig.cmake")
 			set(OpenCV_DIR "${_opencv_cmake_dir}" CACHE PATH "OpenCV cmake config directory" FORCE)
-			find_package(OpenCV QUIET COMPONENTS core imgproc video highgui calib3d)
+			find_package(OpenCV QUIET COMPONENTS core imgproc video highgui calib3d imgcodecs)
 			if(OpenCV_FOUND)
 				break()
 			endif()
@@ -76,16 +114,23 @@ endif()
 
 if(NOT OpenCV_FOUND)
 	message(FATAL_ERROR
-		"OpenCV not found (need components: core, imgproc, video, highgui, calib3d).\n"
-		"  Ubuntu/Debian:  sudo apt update && sudo apt install -y libopencv-dev build-essential cmake\n"
+		"OpenCV not found (need components: core, imgproc, video, highgui, calib3d, imgcodecs).\n"
+		"  Ubuntu/Debian:  sudo apt update && sudo apt install -y libopencv-dev libopencv-contrib-dev\n"
 		"  Then reconfigure, or set OpenCV_DIR explicitly, e.g.:\n"
 		"    cmake -DOpenCV_DIR=/usr/lib/x86_64-linux-gnu/cmake/opencv4 ..")
+endif()
+
+find_path(PYLON_TRACK_ARUCO_INCLUDE opencv2/aruco.hpp
+	HINTS ${OpenCV_INCLUDE_DIRS})
+if(NOT PYLON_TRACK_ARUCO_INCLUDE)
+	message(FATAL_ERROR
+		"OpenCV aruco module not found — install libopencv-contrib-dev (ChArUco camera setup)")
 endif()
 
 message(STATUS "OpenCV version : ${OpenCV_VERSION}")
 message(STATUS "OpenCV includes: ${OpenCV_INCLUDE_DIRS}")
 
-# ── cnpy (read src/camera/calibration.py calib.npz; vendored — no FetchContent/git) ──
+# ── cnpy (read/write calib.npz from setup; vendored — no FetchContent/git) ──
 find_package(ZLIB REQUIRED)
 add_library(cnpy STATIC third_party/cnpy/cnpy.cpp)
 target_include_directories(cnpy PUBLIC third_party/cnpy)
@@ -131,6 +176,33 @@ if(UNIX)
 
 	add_executable(ferret_tracker ${SOURCES})
 
+	add_executable(arena_experiment
+		src/arena_experiment_main.cpp
+		${ARENA_PIPELINE_SOURCES}
+		${CALIBRATE_SOURCES}
+	)
+
+	add_library(arena_motor STATIC ${MOTOR_SOURCES})
+	target_include_directories(arena_motor PUBLIC
+		${CMAKE_SOURCE_DIR}/include
+	)
+	target_link_libraries(arena_motor PUBLIC pthread)
+
+	if(ENABLE_LABJACK)
+		find_path(LJM_INCLUDE_DIR LabJackM.h
+			HINTS /usr/include /usr/local/include ${LJM_ROOT}/../include)
+		find_library(LJM_LIBRARY NAMES labjacklm
+			HINTS ${LJM_ROOT} /usr/lib /usr/local/lib)
+		if(LJM_INCLUDE_DIR AND LJM_LIBRARY)
+			target_compile_definitions(arena_motor PRIVATE PYLON_TRACK_HAS_LJM=1)
+			target_include_directories(arena_motor PRIVATE ${LJM_INCLUDE_DIR})
+			target_link_libraries(arena_motor PRIVATE ${LJM_LIBRARY})
+			message(STATUS "LabJack LJM   : ${LJM_LIBRARY}")
+		else()
+			message(STATUS "LabJack LJM   : not found — trap door LabJack backend stubbed")
+		endif()
+	endif()
+
 	target_include_directories(ferret_tracker PRIVATE
 		${CMAKE_SOURCE_DIR}/include
 		${PYLON_ROOT}/include
@@ -148,6 +220,26 @@ if(UNIX)
 		pthread
 	)
 
+	target_include_directories(arena_experiment PRIVATE
+		${CMAKE_SOURCE_DIR}/include
+		${PYLON_ROOT}/include
+		${OpenCV_INCLUDE_DIRS}
+	)
+	target_link_directories(arena_experiment PRIVATE ${PYLON_ROOT}/lib)
+	target_link_libraries(arena_experiment
+		${PYLON_LINK_FLAGS}
+		${OpenCV_LIBS}
+		nlohmann_json::nlohmann_json
+		cnpy
+		ZLIB::ZLIB
+		arena_motor
+		pthread
+	)
+	set_target_properties(arena_experiment PROPERTIES
+		INSTALL_RPATH "${PYLON_ROOT}/lib"
+		BUILD_RPATH   "${PYLON_ROOT}/lib"
+	)
+
 	# Copy camera config beside the executable for default runtime lookup.
 	configure_file(
 		${CMAKE_SOURCE_DIR}/src/camera/camera_config.json
@@ -158,6 +250,17 @@ if(UNIX)
 		DEPENDS ${CMAKE_BINARY_DIR}/bin/camera_config.json
 	)
 	add_dependencies(ferret_tracker copy_camera_config)
+
+	configure_file(
+		${CMAKE_SOURCE_DIR}/config/arena_experiment.json
+		${CMAKE_BINARY_DIR}/bin/config/arena_experiment.json
+		COPYONLY
+	)
+	add_custom_target(copy_arena_config ALL
+		DEPENDS ${CMAKE_BINARY_DIR}/bin/config/arena_experiment.json
+	)
+	add_dependencies(ferret_tracker copy_arena_config)
+	add_dependencies(arena_experiment copy_camera_config copy_arena_config)
 
 	# RPATH: embed pylon lib path so the binary runs without LD_LIBRARY_PATH
 	set_target_properties(ferret_tracker PROPERTIES
@@ -189,9 +292,10 @@ if(UNIX)
 
 	message(STATUS
 		"Linux targets available:\n"
-		"  make ferret_tracker   — build → bin/ferret_tracker\n"
-		"  make run_rt           — run with SCHED_FIFO priority (low jitter)\n"
-		"  make install_udev     — install udev rules for USB camera access")
+		"  make ferret_tracker    — build → bin/ferret_tracker\n"
+		"  make arena_experiment  — build → bin/arena_experiment\n"
+		"  make run_rt            — run with SCHED_FIFO priority (low jitter)\n"
+		"  make install_udev      — install udev rules for USB camera access")
 
 	# ── Calibration test suite (tests/) ───────────────────────────────────
 	# Camera-attached tools: parameter sweep, latency benchmark, mount

@@ -1,5 +1,5 @@
 #include "tracker/display.h"
-#include "tracker/ferret_tracker.h"
+#include "vision/camera_tracking_service.h"
 #include "log/logger.h"
 
 #include <chrono>
@@ -62,7 +62,7 @@ cv::Mat render_overlay(const DisplaySnapshot& snap) {
 
 } // namespace
 
-void DisplayThread::start(FerretTracker* tracker, std::atomic<bool>* app_running) {
+void DisplayThread::start(CameraTrackingService* tracker, std::atomic<bool>* app_running) {
 	if (display_running_.load()) {
 		return;
 	}

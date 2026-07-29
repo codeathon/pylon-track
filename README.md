@@ -2,23 +2,66 @@
 
 Real-time dual-animal tracking from a Basler USB3 camera using the [Basler pylon SDK](https://www.baslerweb.com/en/software/pylon/) and OpenCV. Designed for overhead arena imaging: track a **ferret** and **prey** (mouse) at ~200 fps, output position, speed, heading, and inter-animal distance in millimeters.
 
+The **arena experiment platform** adds closed-loop prey chase via an ODrive S1 chain motor, optional LabJack trap-door control, session CSV recording, and a state-managed workflow in `arena_experiment`.
+
 **Platform:** Linux only (tested workflow targets Ubuntu with USB3 Basler cameras).
 
 A companion **calibration test suite** under [`tests/`](tests/) sweeps camera settings,
 benchmarks two-object tracking latency, and validates mounting height — see
 [Calibration and testing](#calibration-and-testing).
 
+## Binaries
+
+| Binary | Purpose |
+|--------|---------|
+| `ferret_tracker` | Tracker-only debug tool (stdout telemetry) |
+| `arena_experiment` | Full experiment orchestrator (camera + motor + chase + CSV sessions) |
+
 ## What it does
+
+### Tracker (`ferret_tracker`)
 
 1. Opens the first available Basler camera (`CBaslerUniversalInstantCamera`).
 2. Configures mono8 capture, AOI, exposure, gain, and frame rate from [`src/camera/camera_config.json`](src/camera/camera_config.json).
-3. On each frame (`src/tracker/ferret_tracker.cpp`):
+3. On each frame (`CameraTrackingService` / `FerretTracker`):
    - MOG2 background subtraction (30 s warmup — keep arena empty)
-   - Morphological cleanup + contour detection
-   - Assigns largest blob → ferret, second largest → prey
+   - Arena mask excludes pulley/chain regions (when configured)
+   - `ObjectAssociator` assigns ferret/prey by area priors + track continuity
    - Kalman filtering per animal for smooth position/velocity
-   - Handles merge/occlusion (single large blob) by coasting prey on prediction
+   - Handles merge/occlusion by coasting prey on prediction
 4. Prints live telemetry to stdout until `Ctrl+C` or `SIGTERM`.
+
+### Arena experiment (`arena_experiment`)
+
+Two subcommands — **one-time setup** vs **per-session run**:
+
+| Subcommand | When | What it does |
+|------------|------|----------------|
+| **`setup`** | New rig / hardware change | Bundled C++ setup: arena masks, ChArUco lens, ODrive chain (CAN), LabJack trap |
+| **`run`** | Every experiment session | Load artifacts, stream camera, record CSVs, chase trials |
+
+**Setup** (once, interactive — requires `--display`):
+
+```bash
+./build/bin/arena_experiment setup --config config/arena_experiment.json --display
+```
+
+Steps run in order: arena masks → camera lens → ODrive chain → LabJack trap.  
+Re-run one step: `--only arena|camera|odrive|labjack`.
+
+**Run** (each session):
+
+```bash
+sudo ip link set can0 up type can bitrate 250000   # if using prey motor
+./build/bin/arena_experiment run --config config/arena_experiment.json --session sessions
+```
+
+Per-session flow:
+
+1. **Setup** — load config, verify `calib.npz` + motor constants from prior `setup`
+2. **Configuring** — start Pylon grab + tracking pipeline, connect motor/trap
+3. **Streaming** — MOG2 warmup 30 s (empty arena), ferret/prey identification
+4. **Chase session** — **`s`** start trial, **`e`** end, **`r`** reset
 
 Example line:
 
@@ -31,47 +74,32 @@ Ferret: (450, 320)mm  850mm/s  45deg  |  Prey: (520, 410)mm  120mm/s  90deg  |  
 ```text
 pylon-track/
 ├── CMakeLists.txt
-├── include/                  Public headers
-│   ├── camera/
-│   │   ├── camera_config.h
-│   │   ├── camera_calib.h      Load calib.npz + undistort maps
-│   │   └── camera_settings.h
+├── config/
+│   └── arena_experiment.json   Chase policy, motor, vision masks, trap door
+├── include/
+│   ├── camera/                 Camera config + lens calib
+│   ├── calibrate/              SetupRunner + one-time rig calibrators
+│   ├── experiment/           State manager, session recorder, trial FSM
 │   ├── log/
-│   │   └── logger.h            Global thread-safe logger
-│   └── tracker/
-│       ├── display.h
-│       ├── ferret_tracker.h
-│       └── tracker.h             Kalman filter + TrackState
-├── src/                      Implementation
-│   ├── main.cpp              Entry point, signal handling, stdout loop
+│   ├── motor/                  ODrive CAN, chase policy, LabJack trap door
+│   ├── tracker/                FerretTracker wrapper, display
+│   └── vision/                 Pipeline, associator, arena mask
+├── src/
+│   ├── arena_experiment_main.cpp   setup | run entry point
+│   ├── calibrate/                  One-time setup (arena, camera, ODrive, LabJack)
+│   ├── main.cpp                    ferret_tracker entry point
 │   ├── camera/
-│   │   ├── camera_config.cpp Load JSON + apply GenICam settings
-│   │   ├── camera_calib.cpp  Load calib.npz (cnpy) + build undistort maps
-│   │   ├── camera_config.json Camera exposure, gain, AOI, frame rate (edit this)
-│   │   └── calibration.py    ChArUco lens calibration → calib.npz
+│   ├── calibrate/              One-time setup (arena, camera, ODrive, LabJack)
+│   ├── experiment/
 │   ├── log/
-│   │   └── logger.cpp
-│   └── tracker/
-│       ├── ferret_tracker.cpp Pylon image handler: BG subtract + track logic
-│       ├── tracker.cpp        Shared Kalman filter helper
-│       └── display.cpp        Live overlay window (helper thread)
+│   ├── motor/                  ODrive CAN, chase policy, LabJack trap door
+│   ├── tracker/
+│   └── vision/
 ├── tests/                    Camera calibration suite (hardware-in-the-loop)
-│   ├── README.md             Full run protocols + Basler calibration notes
-│   ├── common/               Shared: session dirs, CSV writer, image metrics
-│   ├── sweep_configs/        Parameter + preset sweep specs (14 JSON files)
-│   ├── one_time_settings.json  Fixed rig values for test_one_time_setup
-│   ├── one_time_suite.cpp      One-time rig setup → test_one_time_setup
-│   ├── param_sweep.cpp       Config + preset sweeps → test_param_sweep
-│   ├── latency_suite.cpp     Latency benchmark → test_latency
-│   └── mount_height_suite.cpp Mount height validation → test_mount_height
-└── build/                    Out-of-source build (created by you)
-    └── bin/
-        ├── ferret_tracker      Production tracker
-        ├── test_one_time_setup Calibration: one-time rig settings + report
-        ├── test_param_sweep    Calibration: parameter + preset sweeps
-        ├── test_latency        Calibration: two-object latency benchmark
-        ├── test_mount_height   Calibration: mounting height validation
-        └── camera_config.json  Copied from src/camera/ at build time
+└── build/bin/
+    ├── ferret_tracker
+    ├── arena_experiment
+    └── config/arena_experiment.json
 ```
 
 Source files still use the `ferret_tracker` name internally; the repo name reflects the **pylon** camera stack.
@@ -86,7 +114,7 @@ All four are required before `cmake` will succeed:
 |---------|---------|-------------------------|
 | **build-essential** | C++17 compiler, `make`, linker | `build-essential` |
 | **cmake** | Configure the project (≥ 3.16) | `cmake` |
-| **OpenCV (dev)** | MOG2, contours, Kalman (`core`, `imgproc`, `video`) | `libopencv-dev` |
+| **OpenCV (dev + contrib)** | MOG2, ChArUco setup, contours, Kalman | `libopencv-dev` `libopencv-contrib-dev` |
 | **Basler pylon SDK** | Camera grab + GenICam API | [Install from Basler](https://www.baslerweb.com/en/software/pylon/) → default `/opt/pylon` |
 
 ### Hardware
@@ -100,7 +128,7 @@ All four are required before `cmake` will succeed:
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential cmake libopencv-dev zlib1g-dev nlohmann-json3-dev
+sudo apt install -y build-essential cmake libopencv-dev libopencv-contrib-dev zlib1g-dev nlohmann-json3-dev
 ```
 
 `nlohmann-json3-dev` is optional but avoids CMake downloading json during configure.
@@ -136,9 +164,9 @@ cmake -DPYLON_ROOT=/opt/pylon ..
 make
 ```
 
-This builds `ferret_tracker` and the calibration tools (`test_param_sweep`,
-`test_latency`, `test_mount_height`). Disable the suite with
-`-DBUILD_CALIBRATION_TESTS=OFF` if you only need the production binary.
+This builds `ferret_tracker`, `arena_experiment`, and the calibration tools
+(`test_param_sweep`, `test_latency`, `test_mount_height`). Disable the suite with
+`-DBUILD_CALIBRATION_TESTS=OFF` if you only need the production binaries.
 
 If pylon is installed elsewhere:
 
@@ -154,9 +182,77 @@ cmake -DOpenCV_DIR=/usr/lib/x86_64-linux-gnu/cmake/opencv4 -DPYLON_ROOT=/opt/pyl
 
 ## Run
 
+### Tracker only (debug)
+
 ```bash
 ./build/bin/ferret_tracker
 ```
+
+### Arena experiment (closed-loop chase)
+
+```bash
+# One-time rig setup (arena masks, ChArUco lens, ODrive chain, LabJack trap)
+./build/bin/arena_experiment setup --config config/arena_experiment.json --display
+
+# Each experiment session
+sudo ip link set can0 up type can bitrate 250000
+./build/bin/arena_experiment run \
+  --config config/arena_experiment.json \
+  --session sessions
+```
+
+| Flag | Effect |
+|------|--------|
+| `--display` | Required for `setup` (arena + camera capture windows) |
+| `--only <step>` | Run one setup step: `arena`, `camera`, `odrive`, `labjack` |
+| `--verbose` | Debug logging |
+| `--no-calib` | `run` without lens undistort (dev only) |
+| `--camera-config PATH` | Override camera JSON |
+| `--calib PATH` | Override `calib.npz` path |
+
+Operator keys during experiment: **`s`** start chase trial, **`e`** end, **`r`** reset.
+
+Session output: `sessions/arena_experiment/<timestamp>/telemetry.csv` + `events.csv`.
+
+### Arena config (`config/arena_experiment.json`)
+
+| Section | Key fields | Purpose |
+|---------|------------|---------|
+| `vision` | `ignore_regions`, `track_roi` | Mask pulleys/chains; animal area priors |
+| `motor` | `can_interface`, `node_id`, `chain_mm_per_motor_turn`, `chain_direction_sign` | ODrive CAN prey motor |
+| `trap_door` | `backend` (`noop` / `labjack`), `labjack.dio_pin` | Trap door DIO via LabJack LJM |
+| `chase_policy` | `threat_distance_mm`, `cone_half_angle_deg`, speed limits | Cone-of-impact flee policy |
+| `trial` | `timeout_s` | Trial timeout (future use) |
+
+Mark pulley/chain exclusion zones in `ignore_regions` using the interactive **arena** setup step (`setup --only arena`).
+
+### One-time setup details (`arena_experiment setup`)
+
+All setup is C++ — no Python dependencies.
+
+| Step | Keys / prompts | Writes |
+|------|----------------|--------|
+| **Arena** | `i` ignore region, `r` track ROI, LMB vertex, RMB close, `s` save, `q` quit | `vision.ignore_regions`, `vision.track_roi` in JSON |
+| **Camera** | SPACE save ChArUco frame, `q` quit (~20 frames), then auto-calibrate | `calib.npz` beside executable |
+| **ODrive** | CAN must be up; measure chain travel (mm), confirm direction | `motor.*` in JSON |
+| **LabJack** | Open/close trap; confirm motion | validates wiring (noop backend skips) |
+
+ODrive chain setup uses **SocketCAN** (same path as runtime chase). Ensure CAN is enabled on the drive (odrivetool/Web GUI once), then:
+
+```bash
+sudo ip link set can0 up type can bitrate 250000
+./build/bin/arena_experiment setup --config config/arena_experiment.json --only odrive
+```
+
+Build with LabJack trap-door support (optional):
+
+```bash
+cmake -DENABLE_LABJACK=ON -DLJM_ROOT=/usr/local/lib ..
+```
+
+---
+
+### Tracker stdout mode
 
 Headless mode (default): status messages use the global logger; tracking telemetry prints as **raw** lines (no timestamp prefix) for easy piping.
 
@@ -195,16 +291,9 @@ Default lookup: `camera_config.json` next to the executable (`build/bin/`), then
 
 ### Lens calibration (`calib.npz`)
 
-ChArUco intrinsics from [`src/camera/calibration.py`](src/camera/calibration.py) correct wide-angle distortion before tracking:
+Written by `arena_experiment setup` (camera step). ChArUco intrinsics correct wide-angle distortion before tracking.
 
-```bash
-python src/camera/calibration.py --make-board
-python src/camera/calibration.py --capture      # SPACE saves frames, q quits
-python src/camera/calibration.py --calibrate    # writes calib.npz (repo root)
-cp calib.npz build/bin/              # or set PYLON_CAMERA_CALIB
-```
-
-`ferret_tracker` auto-loads `calib.npz` beside the executable (or `./calib.npz` from cwd). Override or disable:
+`ferret_tracker` and `arena_experiment run` auto-load `calib.npz` beside the executable (or `./calib.npz` from cwd). Override or disable:
 
 ```bash
 ./build/bin/ferret_tracker --calib /path/to/calib.npz
@@ -300,19 +389,29 @@ Change these if your mount height, lens, or arena size differs.
 
 ## Architecture (data flow)
 
+### Tracker
+
 ```text
 Basler camera (pylon Grab)
         │
         ▼
-OnImageGrabbed (zero-copy cv::Mat on frame buffer)
+CameraTrackingService::OnImageGrabbed
         │
-        ├─ MOG2 background subtract
-        ├─ morphology + findContours
-        ├─ sort by area → ferret / prey assignment
-        └─ Kalman predict/correct per track
+        ├─ MOG2 + arena mask
+        ├─ ObjectAssociator → ferret / prey
+        └─ Kalman per track
         │
         ▼
-main loop reads TrackState → printf distance + kinematics
+stdout telemetry or session CSV
+```
+
+### Arena experiment
+
+```text
+CameraTrackingService ──► TrackingFrame ──► ChaseController ──► PreyMotor (SocketCAN)
+        │                                        ▲
+        └─ SessionRecorder (telemetry.csv)       └── chase_policy (cone-of-impact)
+ExperimentStateManager orchestrates: setup artifacts → stream → chase trial
 ```
 
 ## Calibration and testing
@@ -495,7 +594,8 @@ metric interpretation.
 
 | Target | Command | Description |
 |--------|---------|-------------|
-| `ferret_tracker` | `make ferret_tracker` | Production tracker executable |
+| `ferret_tracker` | `make ferret_tracker` | Tracker-only executable |
+| `arena_experiment` | `make arena_experiment` | Full experiment orchestrator |
 | `test_one_time_setup` | `make test_one_time_setup` | Calibration: one-time rig settings |
 | `test_param_sweep` | `make test_param_sweep` | Calibration: parameter + preset sweeps |
 | `test_latency` | `make test_latency` | Calibration: latency benchmark |
@@ -512,7 +612,8 @@ metric interpretation.
 | `chrt: Operation not permitted` (`make run_rt`) | Use `./build/bin/ferret_tracker` instead, or `sudo setcap cap_sys_nice+ep build/bin/ferret_tracker` |
 | `pylon SDK not found` | Set `-DPYLON_ROOT=` to your install prefix |
 | No camera found | USB cable, `install_udev`, camera powered |
-| No valid tracks after warmup | Lighting, gain (target ~80–100 DN background), arena contrast |
+| No valid tracks after warmup | Lighting, gain, arena mask / ignore_regions, animal area priors in `arena_experiment.json` |
+| Motor connect failed in arena_experiment | CAN up? `sudo ip link set can0 up type can bitrate 250000`; run `arena_experiment setup --only odrive` |
 | Low frame rate | AOI size, `DeviceLinkThroughputLimitMode`, USB3 port |
 | High jitter | `make run_rt`, CPU isolation, reduce pipeline load |
 | Calibration tools missing after build | Ensure `BUILD_CALIBRATION_TESTS=ON` (default); run `make` not only `make ferret_tracker` |

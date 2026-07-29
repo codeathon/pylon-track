@@ -1,0 +1,39 @@
+{
+	"vision": {
+		"ignore_regions": [],
+		"track_roi": null,
+		"ferret_area_px_min": 5000,
+		"ferret_area_px_max": 60000,
+		"prey_area_px_min": 500,
+		"prey_area_px_max": 15000,
+		"max_compactness": 0.35
+	},
+	"trap_door": {
+		"backend": "noop",
+		"open_hold_ms": 500,
+		"labjack": {
+			"device_type": "T7",
+			"connection": "ANY",
+			"identifier": "ANY",
+			"dio_pin": "FIO0",
+			"active_high": true
+		}
+	},
+	"motor": {
+		"can_interface": "can0",
+		"node_id": 0,
+		"pulley_radius_m": 0.025,
+		"chain_direction_sign": 1,
+		"chain_mm_per_motor_turn": 157.0
+	},
+	"chase_policy": {
+		"min_chain_speed_mps": 0.05,
+		"max_chain_speed_mps": 0.8,
+		"cone_half_angle_deg": 45.0,
+		"threat_distance_mm": 800.0,
+		"creep_distance_mm": 2000.0
+	},
+	"trial": {
+		"timeout_s": 120.0
+	}
+}

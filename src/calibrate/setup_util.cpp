@@ -1,0 +1,102 @@
+#include "calibrate/setup_util.h"
+
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <string>
+
+namespace fs = std::filesystem;
+
+SetupStep parse_setup_step(const std::string& name) {
+	if (name == "arena") return SetupStep::Arena;
+	if (name == "camera") return SetupStep::Camera;
+	if (name == "odrive") return SetupStep::ODrive;
+	if (name == "labjack") return SetupStep::LabJack;
+	return SetupStep::All;
+}
+
+std::string resolve_arena_config_path(const char* argv0, const std::string& user_path) {
+	if (!user_path.empty()) {
+		return user_path;
+	}
+	const fs::path exe_dir = fs::path(argv0 ? argv0 : "").parent_path();
+	const fs::path candidates[] = {
+		exe_dir / "arena_experiment.json",
+		exe_dir / "config" / "arena_experiment.json",
+		fs::path("config") / "arena_experiment.json",
+	};
+	for (const auto& path : candidates) {
+		if (fs::exists(path)) {
+			return path.string();
+		}
+	}
+	return {};
+}
+
+std::string resolve_calib_output_path(const char* argv0, const std::string& user_path) {
+	if (!user_path.empty()) {
+		return user_path;
+	}
+	const fs::path exe_dir = fs::path(argv0 ? argv0 : "").parent_path();
+	const fs::path beside_exe = exe_dir / "calib.npz";
+	if (fs::exists(beside_exe.parent_path()) || exe_dir.empty()) {
+		return beside_exe.string();
+	}
+	return "calib.npz";
+}
+
+bool can_interface_up(const std::string& iface) {
+	const fs::path operstate = fs::path("/sys/class/net") / iface / "operstate";
+	std::ifstream file(operstate);
+	if (!file.is_open()) {
+		return false;
+	}
+	std::string state;
+	file >> state;
+	return state == "up";
+}
+
+void print_setup_banner(const char* step_name, int step_num, int step_total) {
+	std::cout << "\n=== Arena setup (step " << step_num << "/" << step_total
+		<< "): " << step_name << " ===\n";
+}
+
+bool prompt_enter(const char* message) {
+	std::cout << message;
+	std::string line;
+	return static_cast<bool>(std::getline(std::cin, line));
+}
+
+bool prompt_yes_no(const char* message) {
+	while (true) {
+		std::cout << message;
+		std::string raw;
+		if (!std::getline(std::cin, raw)) {
+			return false;
+		}
+		if (raw == "y" || raw == "Y" || raw == "yes") {
+			return true;
+		}
+		if (raw == "n" || raw == "N" || raw == "no") {
+			return false;
+		}
+		std::cout << "Answer y or n.\n";
+	}
+}
+
+float prompt_float(const char* message) {
+	while (true) {
+		std::cout << message;
+		std::string raw;
+		if (!std::getline(std::cin, raw)) {
+			return 0.0f;
+		}
+		try {
+			return std::stof(raw);
+		} catch (...) {
+			std::cout << "Enter a number.\n";
+		}
+	}
+}
