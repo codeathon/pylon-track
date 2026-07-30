@@ -42,8 +42,9 @@ bool unpack_float_le(const uint8_t* in, float& value) {
 
 ODriveCan::ODriveCan(const ODriveCanConfig& cfg) : cfg_(cfg) {}
 
+// ODrive CANSimple: arbitration ID = (node_id << 5) | cmd_id  (11-bit).
 uint16_t ODriveCan::can_id(uint16_t cmd_id, uint8_t node_id) {
-	return static_cast<uint16_t>((cmd_id << 5) | node_id);
+	return static_cast<uint16_t>((static_cast<uint16_t>(node_id) << 5) | (cmd_id & 0x1F));
 }
 
 bool ODriveCan::open() {
@@ -105,32 +106,39 @@ bool ODriveCan::recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len
 	pollfd pfd{};
 	pfd.fd = socket_fd_;
 	pfd.events = POLLIN;
-	const int poll_ms = cfg_.rx_timeout_ms;
-	if (poll(&pfd, 1, poll_ms) <= 0) {
-		return false;
-	}
+	const auto deadline = std::chrono::steady_clock::now()
+		+ std::chrono::milliseconds(cfg_.rx_timeout_ms);
 
-	can_frame frame{};
-	const ssize_t n = read(socket_fd_, &frame, sizeof(frame));
-	if (n < static_cast<ssize_t>(sizeof(can_frame))) {
-		return false;
+	// Bus is busy with cyclic encoder/heartbeat — skip non-matching frames until timeout.
+	while (std::chrono::steady_clock::now() < deadline) {
+		const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+			deadline - std::chrono::steady_clock::now()).count();
+		if (poll(&pfd, 1, static_cast<int>(std::max<int64_t>(left, 0))) <= 0) {
+			return false;
+		}
+
+		can_frame frame{};
+		const ssize_t n = read(socket_fd_, &frame, sizeof(frame));
+		if (n < static_cast<ssize_t>(sizeof(can_frame))) {
+			continue;
+		}
+		const uint32_t id = frame.can_id & CAN_SFF_MASK;
+		const uint16_t cmd_id = static_cast<uint16_t>(id & 0x1F);
+		const uint8_t node_id = static_cast<uint8_t>((id >> 5) & 0x3F);
+		if (cmd_id != expected_cmd_id || node_id != cfg_.node_id) {
+			continue;
+		}
+		if (data_out && len_out > 0) {
+			const uint8_t copy_len = std::min(len_out, frame.can_dlc);
+			std::memcpy(data_out, frame.data, copy_len);
+		}
+		return true;
 	}
-	const uint16_t cmd_id = static_cast<uint16_t>((frame.can_id >> 5) & 0x7FF);
-	const uint8_t node_id = static_cast<uint8_t>(frame.can_id & 0x1F);
-	if (cmd_id != expected_cmd_id || node_id != cfg_.node_id) {
-		return false;
-	}
-	if (data_out && len_out > 0) {
-		const uint8_t copy_len = std::min(len_out, frame.can_dlc);
-		std::memcpy(data_out, frame.data, copy_len);
-	}
-	return true;
+	return false;
 }
 
 bool ODriveCan::get_encoder_estimates(float& pos_turns, float& vel_turns_s) const {
-	if (!send_frame(CMD_GET_ENCODER_ESTIMATES, nullptr, 0)) {
-		return false;
-	}
+	// Cyclic by default (~10 ms); listen rather than request.
 	uint8_t buf[8] = {};
 	if (!recv_frame(CMD_GET_ENCODER_ESTIMATES, buf, sizeof(buf))) {
 		return false;
@@ -152,9 +160,7 @@ bool ODriveCan::send_estop() {
 }
 
 bool ODriveCan::check_heartbeat() const {
-	if (!send_frame(CMD_HEARTBEAT, nullptr, 0)) {
-		return false;
-	}
+	// Heartbeat is cyclic (~100 ms) from the drive — do not TX a fake request.
 	uint8_t buf[8] = {};
 	return recv_frame(CMD_HEARTBEAT, buf, sizeof(buf));
 }
@@ -173,15 +179,13 @@ bool ODriveCan::set_controller_mode(int32_t control_mode, int32_t input_mode) {
 }
 
 bool ODriveCan::get_axis_state(uint32_t& axis_error, uint32_t& axis_state) const {
-	if (!send_frame(CMD_HEARTBEAT, nullptr, 0)) {
-		return false;
-	}
 	uint8_t buf[8] = {};
 	if (!recv_frame(CMD_HEARTBEAT, buf, sizeof(buf))) {
 		return false;
 	}
 	std::memcpy(&axis_error, buf, sizeof(uint32_t));
-	std::memcpy(&axis_state, buf + 4, sizeof(uint32_t));
+	// Heartbeat packs Axis_State as uint8 at byte 4 (not a full uint32).
+	axis_state = buf[4];
 	return true;
 }
 

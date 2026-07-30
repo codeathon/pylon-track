@@ -7,8 +7,8 @@
 // Wraps all CAN frame encode/decode so PreyMotor stays chain-centric.
 struct ODriveCanConfig {
 	std::string interface = "can0";
-	uint8_t node_id = 0;
-	int rx_timeout_ms = 50;
+	uint8_t node_id = 0; // match .axis.config.can.node_id (lab drive is 62)
+	int rx_timeout_ms = 200;
 };
 
 class ODriveCan {
