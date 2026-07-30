@@ -8,6 +8,7 @@
 #include <pylon/PylonIncludes.h>
 #include <pylon/BaslerUniversalInstantCamera.h>
 
+#include "calibrate/setup_util.h"
 #include "camera/camera_calib.h"
 #include "camera/camera_config.h"
 #include "camera/camera_settings.h"
@@ -145,7 +146,10 @@ bool ExperimentStateManager::verify_setup_artifacts() {
 
 bool ExperimentStateManager::connect_runtime_hardware() {
 	readiness_.motor = ComponentStatus::Calibrating;
-	if (prey_motor_->connect()) {
+	if (!can_interface_up(cfg_.motor.can_interface)) {
+		log_error("experiment", can_interface_down_hint(cfg_.motor.can_interface));
+		readiness_.motor = ComponentStatus::Error;
+	} else if (prey_motor_->connect()) {
 		readiness_.motor = ComponentStatus::Ready;
 		log_info("experiment", "Prey motor connected");
 	} else {

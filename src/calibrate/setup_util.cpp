@@ -2,11 +2,16 @@
 #include "calibrate/setup_options.h"
 
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
+
+#include <net/if.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 namespace fs = std::filesystem;
 
@@ -49,14 +54,30 @@ std::string resolve_calib_output_path(const char* argv0, const std::string& user
 }
 
 bool can_interface_up(const std::string& iface) {
-	const fs::path operstate = fs::path("/sys/class/net") / iface / "operstate";
-	std::ifstream file(operstate);
-	if (!file.is_open()) {
+	// Match `ip addr show` administrative UP (IFF_UP).
+	// Do not use operstate — SocketCAN often reports "unknown" while UP.
+	if (iface.empty() || iface.size() >= IFNAMSIZ) {
 		return false;
 	}
-	std::string state;
-	file >> state;
-	return state == "up";
+	const int fd = socket(AF_INET, SOCK_DGRAM, 0);
+	if (fd < 0) {
+		return false;
+	}
+	struct ifreq req;
+	std::memset(&req, 0, sizeof(req));
+	std::snprintf(req.ifr_name, IFNAMSIZ, "%s", iface.c_str());
+	const int rc = ioctl(fd, SIOCGIFFLAGS, &req);
+	close(fd);
+	if (rc < 0) {
+		return false;
+	}
+	return (req.ifr_flags & IFF_UP) != 0;
+}
+
+std::string can_interface_down_hint(const std::string& iface) {
+	return "CAN interface " + iface
+		+ " is not UP (check: ip addr show " + iface + "). "
+		+ "Rebuild with make (sudo installs can0), or: sudo systemctl start pylon-track-can0";
 }
 
 void print_setup_banner(const char* step_name, int step_num, int step_total) {

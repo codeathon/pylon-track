@@ -10,6 +10,9 @@ std::string resolve_calib_output_path(const char* argv0, const std::string& user
 
 bool can_interface_up(const std::string& iface);
 
+// Hint shown when SocketCAN is down (points at host systemd install).
+std::string can_interface_down_hint(const std::string& iface);
+
 void print_setup_banner(const char* step_name, int step_num, int step_total);
 
 bool prompt_enter(const char* message);

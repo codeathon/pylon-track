@@ -1,0 +1,8 @@
+# Optional systemd-networkd alternative (not enabled by default install).
+# Copy to /etc/systemd/network/ and enable systemd-networkd if preferred over
+# pylon-track-can0.service. See README.
+[Match]
+Name=can0
+
+[CAN]
+BitRate=250K

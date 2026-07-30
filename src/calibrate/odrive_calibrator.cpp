@@ -22,9 +22,7 @@ ODriveCalibrator::ODriveCalibrator(const SetupOptions& opts) : opts_(opts) {}
 
 bool ODriveCalibrator::run(const std::string& config_path, ArenaExperimentConfig& cfg) {
 	if (!can_interface_up(cfg.motor.can_interface)) {
-		log_error("setup", "CAN interface " + cfg.motor.can_interface
-			+ " is not up — run: sudo ip link set "
-			+ cfg.motor.can_interface + " up type can bitrate 250000");
+		log_error("setup", can_interface_down_hint(cfg.motor.can_interface));
 		return false;
 	}
 
