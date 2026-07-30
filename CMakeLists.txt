@@ -287,6 +287,25 @@ if(UNIX)
 	add_dependencies(ferret_tracker copy_arena_config)
 	add_dependencies(arena_experiment copy_camera_config copy_arena_config)
 
+	# Lab motor move smoke test (MotionPlanner distance/speed) — no camera/pylon.
+	add_executable(test_odrive_move
+		tests/odrive_move_test.cpp
+		src/experiment/arena_config.cpp
+		src/log/logger.cpp
+		src/calibrate/setup_util.cpp
+	)
+	target_include_directories(test_odrive_move PRIVATE
+		${CMAKE_SOURCE_DIR}/include
+		${OpenCV_INCLUDE_DIRS}
+	)
+	target_link_libraries(test_odrive_move
+		arena_motor
+		nlohmann_json::nlohmann_json
+		${OpenCV_LIBS}
+		pthread
+	)
+	add_dependencies(test_odrive_move copy_arena_config)
+
 	# RPATH: embed pylon lib path so the binary runs without LD_LIBRARY_PATH
 	set_target_properties(ferret_tracker PROPERTIES
 		INSTALL_RPATH "${PYLON_ROOT}/lib"
@@ -353,6 +372,7 @@ if(UNIX)
 		"Linux targets available:\n"
 		"  make                  — build + bring can0 UP (sudo; INSTALL_CAN0_HOST)\n"
 		"  make arena_experiment — build experiment + bring can0 UP\n"
+		"  make test_odrive_move — chain distance/speed move via MotionPlanner\n"
 		"  make ferret_tracker   — build → bin/ferret_tracker\n"
 		"  make run_rt           — run with SCHED_FIFO priority (low jitter)\n"
 		"  make install_udev     — install udev rules for USB camera access\n"
