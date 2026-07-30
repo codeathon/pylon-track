@@ -19,7 +19,6 @@
 #include "calibrate/setup_util.h"
 #include "experiment/arena_config.h"
 #include "log/logger.h"
-#include "motor/chain_move_plan.h"
 #include "motor/motor_config.h"
 #include "motor/motion_planner.h"
 #include "motor/prey_motor.h"
@@ -180,8 +179,9 @@ int main(int argc, char** argv) {
 				duration_ms = 1;
 			}
 		}
-		const ChainMovePlan plan = plan_chain_move(args.distance_mm, duration_ms,
-			args.accel_mps2, motor.mm_per_turn(), cfg.motor.chain_direction_sign);
+		// Same public API chase/setup will use — plan before move.
+		const ChainMovePlan plan = MotionPlanner::plan_distance_mm_in_time(motor,
+			args.distance_mm, duration_ms, args.accel_mps2);
 		std::cout << plan.summary;
 		if (args.plan_only) {
 			return plan.feasible ? 0 : 1;
@@ -258,8 +258,9 @@ int main(int argc, char** argv) {
 	MotionPlanner planner;
 	g_planner = &planner;
 	std::cout << "Press Ctrl+C to abort the move.\n";
-	const bool ok = planner.move_distance_mm_in_time(
-		motor, args.distance_mm, duration_ms, args.accel_mps2);
+	ChainMovePlan executed;
+	const bool ok = planner.move_distance_mm_in_time(motor, args.distance_mm,
+		duration_ms, args.accel_mps2, /*require_feasible=*/true, &executed);
 	g_planner = nullptr;
 	motor.stop();
 	g_motor = nullptr;
@@ -267,7 +268,8 @@ int main(int argc, char** argv) {
 	const float delta_turns = motor.read_position_turns() - pos_before;
 	const float delta_mm = motor.turns_to_chain_mm(delta_turns);
 	std::cout << "Encoder delta: " << delta_turns << " turns ("
-		<< delta_mm << " mm chain)\n";
+		<< delta_mm << " mm chain); planned "
+		<< executed.expected_distance_mm << " mm\n";
 	if (!ok) {
 		log_error("test", "MotionPlanner move failed or cancelled");
 		return 1;

@@ -5,7 +5,6 @@
 #include <cmath>
 #include <thread>
 
-#include "motor/chain_move_plan.h"
 #include "motor/prey_motor.h"
 #include "log/logger.h"
 
@@ -17,8 +16,36 @@ void MotionPlanner::cancel() {
 	cancel_.store(true);
 }
 
+ChainMovePlan MotionPlanner::plan_distance_mm_in_time(const PreyMotor& motor,
+	float distance_mm, int duration_ms, float max_accel_mps2,
+	float odrive_vel_limit_turns_s)
+{
+	return plan_chain_move(distance_mm, duration_ms, max_accel_mps2,
+		motor.mm_per_turn(), motor.config().chain_direction_sign,
+		odrive_vel_limit_turns_s);
+}
+
 bool MotionPlanner::move_distance_mm_in_time(PreyMotor& motor, float distance_mm,
-	int duration_ms, float max_accel_mps2)
+	int duration_ms, float max_accel_mps2, bool require_feasible,
+	ChainMovePlan* out_plan)
+{
+	const ChainMovePlan plan = plan_distance_mm_in_time(motor, distance_mm,
+		duration_ms, max_accel_mps2);
+	if (out_plan) {
+		*out_plan = plan;
+	}
+	if (require_feasible && !plan.feasible) {
+		log_error("motor", "Move refused — plan not feasible:\n" + plan.summary);
+		return false;
+	}
+	if (!plan.accel_ok) {
+		log_info("motor", "Executing partial profile (expected "
+			+ std::to_string(plan.expected_distance_mm) + " mm)");
+	}
+	return execute_plan(motor, plan);
+}
+
+bool MotionPlanner::execute_plan(PreyMotor& motor, const ChainMovePlan& plan)
 {
 	if (busy_.exchange(true)) {
 		log_error("motor", "MotionPlanner already busy");
@@ -32,32 +59,17 @@ bool MotionPlanner::move_distance_mm_in_time(PreyMotor& motor, float distance_mm
 	} guard{busy_};
 
 	if (!motor.status().connected) {
-		log_error("motor", "move_distance_mm_in_time: motor not connected");
+		log_error("motor", "execute_plan: motor not connected");
 		return false;
 	}
-	if (!motor.has_valid_chain_scale()) {
-		log_error("motor",
-			"move_distance_mm_in_time: chain scale is 0 — set "
-			"motor.chain_mm_per_motor_turn in arena_experiment.json (e.g. 157)");
+	if (!plan.scale_ok || !plan.timing_ok) {
+		log_error("motor", "execute_plan: invalid plan (scale/timing)\n"
+			+ plan.summary);
 		return false;
 	}
-	if (duration_ms <= 0) {
-		log_error("motor", "move_distance_mm_in_time: invalid duration");
-		return false;
-	}
-	if (std::fabs(distance_mm) < 1e-3f) {
+	if (std::fabs(plan.distance_mm) < 1e-3f) {
 		motor.stop();
 		return true;
-	}
-
-	// Shared planner — keeps MotionPlanner and --plan-only math identical.
-	const ChainMovePlan plan = plan_chain_move(distance_mm, duration_ms,
-		max_accel_mps2, motor.mm_per_turn(), motor.config().chain_direction_sign);
-	if (!plan.accel_ok) {
-		log_info("motor", "Accel limit reduces expected travel to "
-			+ std::to_string(plan.expected_distance_mm)
-			+ " mm — raise --accel-mps2 (need >= "
-			+ std::to_string(plan.min_accel_mps2) + ")");
 	}
 
 	const float duration_s = plan.duration_s;
@@ -65,16 +77,14 @@ bool MotionPlanner::move_distance_mm_in_time(PreyMotor& motor, float distance_mm
 	const float accel_time = plan.accel_time_s;
 	const float cruise_time = plan.cruise_time_s;
 
-	const auto start = std::chrono::steady_clock::now();
-	float elapsed_s = 0.0f;
-
-	log_info("motor", "Move " + std::to_string(static_cast<int>(distance_mm))
-		+ " mm in " + std::to_string(duration_ms) + " ms (peak "
+	log_info("motor", "Move " + std::to_string(static_cast<int>(plan.distance_mm))
+		+ " mm in " + std::to_string(plan.duration_ms) + " ms (peak "
 		+ std::to_string(peak_speed) + " m/s ≈ "
 		+ std::to_string(plan.peak_turns_s) + " turns/s)");
 
+	const auto start = std::chrono::steady_clock::now();
 	while (!cancel_.load()) {
-		elapsed_s = std::chrono::duration<float>(
+		const float elapsed_s = std::chrono::duration<float>(
 			std::chrono::steady_clock::now() - start).count();
 		if (elapsed_s >= duration_s) {
 			break;
