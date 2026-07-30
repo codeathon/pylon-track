@@ -32,13 +32,17 @@ set(ARENA_PIPELINE_SOURCES
 	src/experiment/trial_state.cpp
 	src/experiment/arena_config.cpp
 	src/experiment/session_recorder.cpp
-	src/experiment/state_manager.cpp
 	src/vision/camera_frame.cpp
 	src/vision/tracking_frame.cpp
 	src/vision/arena_mask.cpp
 	src/vision/object_associator.cpp
 	src/vision/tracking_pipeline.cpp
 	src/vision/camera_tracking_service.cpp
+)
+
+# Orchestrator needs motor drivers — only linked into arena_experiment.
+set(EXPERIMENT_ORCHESTRATOR_SOURCES
+	src/experiment/state_manager.cpp
 )
 
 set(SOURCES
@@ -179,6 +183,7 @@ if(UNIX)
 	add_executable(arena_experiment
 		src/arena_experiment_main.cpp
 		${ARENA_PIPELINE_SOURCES}
+		${EXPERIMENT_ORCHESTRATOR_SOURCES}
 		${CALIBRATE_SOURCES}
 	)
 
