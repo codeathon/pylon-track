@@ -2,7 +2,7 @@
 
 #include <cstdint>
 #include "experiment/trial_state.h"
-#include "tracker.h"
+#include "tracker/tracker.h"
 
 struct AnimalTrack {
 	TrackState state;
