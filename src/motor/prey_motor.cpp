@@ -26,7 +26,12 @@ bool PreyMotor::connect() {
 		return false;
 	}
 	status_.connected = true;
-	status_.heartbeat_ok = can_.check_heartbeat();
+	// Cyclic heartbeat is ~100 ms; retry briefly in case the RX buffer was empty
+	// on the first poll after open.
+	status_.heartbeat_ok = false;
+	for (int i = 0; i < 10 && !status_.heartbeat_ok; ++i) {
+		status_.heartbeat_ok = can_.check_heartbeat();
+	}
 	refresh_status();
 	log_info("motor", status_.heartbeat_ok
 		? "PreyMotor connected with heartbeat"

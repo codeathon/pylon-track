@@ -123,11 +123,19 @@ int main(int argc, char** argv) {
 		}
 	}
 
+	// uint8_t node_id must be cast — iostream otherwise prints ASCII (62 → '>').
 	std::cout << "Move " << args.distance_mm << " mm in " << duration_ms
 		<< " ms (accel " << args.accel_mps2 << " m/s^2)\n"
-		<< "CAN " << cfg.motor.can_interface << " node " << cfg.motor.node_id
+		<< "CAN " << cfg.motor.can_interface
+		<< " node " << static_cast<int>(cfg.motor.node_id)
 		<< ", chain_mm_per_turn=" << cfg.motor.chain_mm_per_motor_turn
+		<< ", pulley_radius_m=" << cfg.motor.pulley_radius_m
 		<< ", direction_sign=" << cfg.motor.chain_direction_sign << '\n';
+	if (cfg.motor.chain_mm_per_motor_turn <= 0.0f) {
+		log_info("test",
+			"chain_mm_per_motor_turn is 0 — using pulley_radius_m fallback; "
+			"set motor.chain_mm_per_motor_turn in arena_experiment.json for accurate mm");
+	}
 
 	if (!can_interface_up(cfg.motor.can_interface)) {
 		log_error("test", can_interface_down_hint(cfg.motor.can_interface));
@@ -140,7 +148,9 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 	if (!motor.status().heartbeat_ok) {
-		log_error("test", "No ODrive heartbeat — check power/CAN");
+		log_error("test",
+			"No ODrive heartbeat — check ODrive power, can0 UP, and node_id "
+			"(candump can0 should show 7C1 heartbeats for node 62)");
 		return 1;
 	}
 	if (!motor.enter_velocity_mode()) {
