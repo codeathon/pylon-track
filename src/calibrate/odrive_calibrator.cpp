@@ -52,17 +52,32 @@ bool ODriveCalibrator::run(const std::string& config_path, ArenaExperimentConfig
 	}
 
 	const float pos_before = motor.read_position_turns();
-	motor.set_velocity_turns_s(kTestTurnsPerS * static_cast<float>(sign));
-	std::this_thread::sleep_for(std::chrono::milliseconds(
-		static_cast<int>(kTestDurationS * 1000.0f)));
+	const float cmd_turns_s = kTestTurnsPerS * static_cast<float>(sign);
+	// Re-send velocity while spinning — ODrive watchdog disarms if Set_Input_Vel
+	// stops (a single command + 2s sleep often yields ~zero encoder delta).
+	const auto spin_end = std::chrono::steady_clock::now()
+		+ std::chrono::milliseconds(static_cast<int>(kTestDurationS * 1000.0f));
+	float vel_sample = 0.0f;
+	while (std::chrono::steady_clock::now() < spin_end) {
+		if (!motor.set_velocity_turns_s(cmd_turns_s)) {
+			log_error("setup", "Set_Input_Vel failed during test spin");
+			motor.set_velocity_turns_s(0.0f);
+			return false;
+		}
+		vel_sample = motor.status().velocity_turns_s;
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	}
 	motor.set_velocity_turns_s(0.0f);
 	std::this_thread::sleep_for(std::chrono::milliseconds(200));
 	const float pos_after = motor.read_position_turns();
 	const float delta_turns = pos_after - pos_before;
 
-	std::cout << "Encoder delta: " << delta_turns << " motor turns\n";
-	if (std::fabs(delta_turns) < 1e-4f) {
-		log_error("setup", "Encoder did not move — check wiring and ODrive calibration");
+	std::cout << "Encoder delta: " << delta_turns << " motor turns"
+		<< " (sample vel " << vel_sample << " turns/s)\n";
+	if (std::fabs(delta_turns) < 1e-3f) {
+		log_error("setup",
+			"Encoder did not move — confirm motor spun; if not, run motor+encoder "
+			"calibration in ODrive GUI, check enable/limits, then retry");
 		return false;
 	}
 
