@@ -13,7 +13,6 @@
 namespace {
 
 constexpr float kTestTurnsPerS = 1.0f;
-constexpr float kTestDurationS = 2.0f;
 constexpr float kTwoPi = 6.283185307f;
 constexpr uint32_t kAxisStateClosedLoop = 8;
 
@@ -82,12 +81,13 @@ bool ODriveCalibrator::run(const std::string& config_path, ArenaExperimentConfig
 	// Motion test always commands +1 turn/s (ODrive units). Direction sign is
 	// only applied later in the short jog / saved chain_direction_sign.
 	const float cmd_turns_s = kTestTurnsPerS;
+	const float spin_s = (opts_.spin_seconds > 0.5f) ? opts_.spin_seconds : 0.5f;
 
 	// Arm closed-loop only after the operator is ready — a prior Enter wait
 	// let the ODrive watchdog disarm before Set_Input_Vel started.
 	if (!opts_.skip_interactive) {
 		std::cout << "\nTest spin: " << cmd_turns_s << " turns/s for "
-			<< kTestDurationS << "s\nKeep hands clear of the chain.\n";
+			<< spin_s << "s\nKeep hands clear of the chain.\n";
 		prompt_enter("Press Enter to arm motor and start test spin...");
 	}
 
@@ -100,7 +100,7 @@ bool ODriveCalibrator::run(const std::string& config_path, ArenaExperimentConfig
 	float vel_sample = 0.0f;
 	uint32_t axis_err = 0;
 	uint32_t axis_state = 0;
-	if (!spin_velocity(motor, cmd_turns_s, kTestDurationS, vel_sample, axis_err, axis_state)) {
+	if (!spin_velocity(motor, cmd_turns_s, spin_s, vel_sample, axis_err, axis_state)) {
 		return false;
 	}
 	std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -116,7 +116,7 @@ bool ODriveCalibrator::run(const std::string& config_path, ArenaExperimentConfig
 			"Axis left closed-loop during spin (watchdog/disarm) — check enable_watchdog timeout");
 		return false;
 	}
-	// ~2 turns expected at 1 turn/s × 2s; sub-turn noise is not real motion.
+	// Expect ~spin_s turns at 1 turn/s; sub-turn noise is not real motion.
 	if (std::fabs(delta_turns) < 0.1f) {
 		log_error("setup",
 			"Encoder barely moved — motor/chain did not spin. Check ODrive GUI "
