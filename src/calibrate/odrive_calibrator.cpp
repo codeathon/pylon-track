@@ -99,17 +99,23 @@ bool ODriveCalibrator::run(const std::string& config_path, ArenaExperimentConfig
 			"Axis left closed-loop during spin (watchdog/disarm) — check enable_watchdog timeout");
 		return false;
 	}
-	if (std::fabs(delta_turns) < 1e-3f) {
+	// ~2 turns expected at 1 turn/s × 2s; sub-turn noise is not real motion.
+	if (std::fabs(delta_turns) < 0.1f) {
 		log_error("setup",
-			"Encoder did not move — confirm motor spun; if not, run motor+encoder "
-			"calibration in ODrive GUI, check enable/limits, then retry");
+			"Encoder barely moved — motor/chain did not spin. Check ODrive GUI "
+			"calibration, vel_limit, coupling to the chain, then retry");
 		return false;
 	}
 
 	float measured_mm = 100.0f;
 	if (!opts_.skip_interactive) {
+		if (!prompt_yes_no("Did you see the chain move during the test spin? [y/n]: ")) {
+			log_error("setup",
+				"No chain motion — fix mechanics/ODrive velocity control before measuring mm");
+			return false;
+		}
 		measured_mm = prompt_float(
-			"Measure chain travel during the test (mm, absolute value): ");
+			"Measure chain travel during the test (mm, absolute value, e.g. 100): ");
 	}
 
 	cfg.motor.chain_mm_per_motor_turn = std::fabs(measured_mm / delta_turns);
