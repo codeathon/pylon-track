@@ -124,11 +124,29 @@ if(NOT OpenCV_FOUND)
 		"    cmake -DOpenCV_DIR=/usr/lib/x86_64-linux-gnu/cmake/opencv4 ..")
 endif()
 
+# ChArUco setup needs opencv_aruco (Ubuntu: libopencv-contrib-dev).
 find_path(PYLON_TRACK_ARUCO_INCLUDE opencv2/aruco.hpp
 	HINTS ${OpenCV_INCLUDE_DIRS})
 if(NOT PYLON_TRACK_ARUCO_INCLUDE)
 	message(FATAL_ERROR
-		"OpenCV aruco module not found — install libopencv-contrib-dev (ChArUco camera setup)")
+		"OpenCV aruco headers not found — install libopencv-contrib-dev (ChArUco camera setup)")
+endif()
+# Prefer the explicit shared lib so we do not overwrite OpenCV_LIBS via a second find.
+find_library(PYLON_TRACK_ARUCO_LIB NAMES opencv_aruco
+	HINTS ${OpenCV_LIB_DIR} /usr/lib/x86_64-linux-gnu /usr/local/lib /opt/homebrew/lib)
+if(PYLON_TRACK_ARUCO_LIB)
+	message(STATUS "OpenCV aruco   : ${PYLON_TRACK_ARUCO_LIB}")
+else()
+	# Newer OpenCV may fold aruco into objdetect; link that if present.
+	find_library(PYLON_TRACK_ARUCO_LIB NAMES opencv_objdetect
+		HINTS ${OpenCV_LIB_DIR} /usr/lib/x86_64-linux-gnu /usr/local/lib /opt/homebrew/lib)
+	if(PYLON_TRACK_ARUCO_LIB)
+		message(STATUS "OpenCV aruco   : via ${PYLON_TRACK_ARUCO_LIB}")
+	else()
+		message(WARNING
+			"opencv_aruco library not found — arena_experiment setup link may fail")
+		set(PYLON_TRACK_ARUCO_LIB "")
+	endif()
 endif()
 
 message(STATUS "OpenCV version : ${OpenCV_VERSION}")
@@ -201,9 +219,10 @@ if(UNIX)
 		find_library(LJM_LIBRARY NAMES labjacklm
 			HINTS ${LJM_ROOT} /usr/lib /usr/local/lib)
 		if(LJM_INCLUDE_DIR AND LJM_LIBRARY)
-			target_compile_definitions(arena_motor PRIVATE PYLON_TRACK_HAS_LJM=1)
-			target_include_directories(arena_motor PRIVATE ${LJM_INCLUDE_DIR})
-			target_link_libraries(arena_motor PRIVATE ${LJM_LIBRARY})
+			# PUBLIC so arena_experiment picks up LJM when linking the static lib.
+			target_compile_definitions(arena_motor PUBLIC PYLON_TRACK_HAS_LJM=1)
+			target_include_directories(arena_motor PUBLIC ${LJM_INCLUDE_DIR})
+			target_link_libraries(arena_motor PUBLIC ${LJM_LIBRARY})
 			message(STATUS "LabJack LJM   : ${LJM_LIBRARY}")
 		else()
 			message(STATUS "LabJack LJM   : not found — trap door LabJack backend stubbed")
@@ -236,6 +255,7 @@ if(UNIX)
 	target_link_libraries(arena_experiment
 		${PYLON_LINK_FLAGS}
 		${OpenCV_LIBS}
+		${PYLON_TRACK_ARUCO_LIB}
 		nlohmann_json::nlohmann_json
 		cnpy
 		ZLIB::ZLIB

@@ -15,6 +15,7 @@
 
 #include "calibrate/charuco_board.h"
 #include "calibrate/setup_util.h"
+#include "camera/camera_calib.h"
 #include "camera/camera_config.h"
 #include "camera/camera_settings.h"
 #include "log/logger.h"

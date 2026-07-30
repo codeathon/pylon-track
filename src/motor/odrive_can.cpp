@@ -1,5 +1,6 @@
 #include "motor/odrive_can.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <poll.h>
