@@ -83,7 +83,7 @@ void ODriveCan::close() {
 	}
 }
 
-bool ODriveCan::send_frame(uint16_t cmd_id, const void* data, uint8_t len) {
+bool ODriveCan::send_frame(uint16_t cmd_id, const void* data, uint8_t len) const {
 	if (socket_fd_ < 0) {
 		return false;
 	}
@@ -97,7 +97,7 @@ bool ODriveCan::send_frame(uint16_t cmd_id, const void* data, uint8_t len) {
 	return n == static_cast<ssize_t>(sizeof(frame));
 }
 
-bool ODriveCan::recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len_out) {
+bool ODriveCan::recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len_out) const {
 	if (socket_fd_ < 0) {
 		return false;
 	}
@@ -126,7 +126,7 @@ bool ODriveCan::recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len
 	return true;
 }
 
-bool ODriveCan::get_encoder_estimates(float& pos_turns, float& vel_turns_s) {
+bool ODriveCan::get_encoder_estimates(float& pos_turns, float& vel_turns_s) const {
 	if (!send_frame(CMD_GET_ENCODER_ESTIMATES, nullptr, 0)) {
 		return false;
 	}
@@ -150,7 +150,7 @@ bool ODriveCan::send_estop() {
 	return send_frame(CMD_ESTOP, nullptr, 0);
 }
 
-bool ODriveCan::check_heartbeat() {
+bool ODriveCan::check_heartbeat() const {
 	if (!send_frame(CMD_HEARTBEAT, nullptr, 0)) {
 		return false;
 	}
@@ -171,7 +171,7 @@ bool ODriveCan::set_controller_mode(int32_t control_mode, int32_t input_mode) {
 	return send_frame(CMD_SET_CONTROLLER_MODE, buf, sizeof(buf));
 }
 
-bool ODriveCan::get_axis_state(uint32_t& axis_error, uint32_t& axis_state) {
+bool ODriveCan::get_axis_state(uint32_t& axis_error, uint32_t& axis_state) const {
 	if (!send_frame(CMD_HEARTBEAT, nullptr, 0)) {
 		return false;
 	}

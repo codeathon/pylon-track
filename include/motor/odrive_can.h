@@ -20,15 +20,16 @@ public:
 	bool is_open() const { return socket_fd_ >= 0; }
 
 	// Request encoder estimates; returns false on timeout or bus error.
-	bool get_encoder_estimates(float& pos_turns, float& vel_turns_s);
+	// const: I/O over socket_fd_ does not change logical driver state.
+	bool get_encoder_estimates(float& pos_turns, float& vel_turns_s) const;
 	bool set_input_velocity(float turns_s, float torque_ff = 0.0f);
 	bool send_estop();
-	bool check_heartbeat();
+	bool check_heartbeat() const;
 
 	// CANSimple setup — used by ODriveCalibrator during one-time setup.
 	bool set_axis_state(uint32_t requested_state);
 	bool set_controller_mode(int32_t control_mode, int32_t input_mode = 1);
-	bool get_axis_state(uint32_t& axis_error, uint32_t& axis_state);
+	bool get_axis_state(uint32_t& axis_error, uint32_t& axis_state) const;
 	bool enter_velocity_mode(int timeout_ms = 10000);
 
 	uint8_t node_id() const { return cfg_.node_id; }
@@ -37,7 +38,7 @@ private:
 	ODriveCanConfig cfg_;
 	int socket_fd_ = -1;
 
-	bool send_frame(uint16_t cmd_id, const void* data, uint8_t len);
-	bool recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len_out);
+	bool send_frame(uint16_t cmd_id, const void* data, uint8_t len) const;
+	bool recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len_out) const;
 	static uint16_t can_id(uint16_t cmd_id, uint8_t node_id);
 };
