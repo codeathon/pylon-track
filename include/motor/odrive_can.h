@@ -27,6 +27,9 @@ public:
 	bool send_estop();
 	bool clear_errors();
 	bool check_heartbeat() const;
+	// ODrive autobaud stays silent until it sees host traffic — beacon then wait
+	// for cyclic Heartbeat (returns false if still quiet after timeout_ms).
+	bool wake_autobaud(int timeout_ms = 3000);
 
 	// CANSimple setup — used by ODriveCalibrator during one-time setup.
 	bool set_axis_state(uint32_t requested_state);
@@ -45,6 +48,7 @@ private:
 	int socket_fd_ = -1;
 
 	bool send_frame(uint16_t cmd_id, const void* data, uint8_t len) const;
+	bool send_raw_frame(uint32_t can_id_11, const void* data, uint8_t len) const;
 	bool recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len_out) const;
 	bool wait_for_axis_state(uint32_t wanted, int timeout_ms) const;
 	void flush_rx() const;

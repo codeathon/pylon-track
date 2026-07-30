@@ -35,4 +35,17 @@ if ! iface_admin_up "$IFACE"; then
 	exit 1
 fi
 
+# ODrive autobaud: drive stays silent until it sees host frames (≥10 Hz).
+# Best-effort — can-utils may be missing; apps also beacon on PreyMotor::connect.
+if command -v cangen >/dev/null 2>&1; then
+	cangen "$IFACE" -I 7C0 -L 0 -g 50 -n 40 >/dev/null 2>&1 || true
+	echo "can0-up: sent autobaud beacon (cangen)"
+elif command -v cansend >/dev/null 2>&1; then
+	for _ in $(seq 1 40); do
+		cansend "$IFACE" 7C0# || true
+		sleep 0.05
+	done
+	echo "can0-up: sent autobaud beacon (cansend)"
+fi
+
 echo "can0-up: $IFACE UP bitrate $BITRATE"

@@ -42,6 +42,20 @@ def main() -> int:
 	while bus.recv(timeout=0) is not None:
 		pass
 
+	# ODrive autobaud: silent until host traffic; beacon then wait for heartbeat.
+	print("Autobaud beacon...")
+	t_end = time.monotonic() + 3.0
+	got_hb = False
+	while time.monotonic() < t_end:
+		send(0x00, b"")
+		msg = bus.recv(timeout=0.05)
+		if msg is not None and msg.arbitration_id == ((node << 5) | 0x01):
+			got_hb = True
+			break
+	if not got_hb:
+		print("No heartbeat after beacon — check ODrive power/CAN wiring")
+		return 1
+
 	send(0x18, struct.pack("<B", 0))  # Clear_Errors
 	send(0x07, struct.pack("<I", 1))  # IDLE
 	time.sleep(0.2)

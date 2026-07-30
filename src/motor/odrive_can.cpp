@@ -121,18 +121,61 @@ void ODriveCan::close() {
 	}
 }
 
-bool ODriveCan::send_frame(uint16_t cmd_id, const void* data, uint8_t len) const {
+bool ODriveCan::send_raw_frame(uint32_t can_id_11, const void* data, uint8_t len) const {
 	if (socket_fd_ < 0) {
 		return false;
 	}
 	can_frame frame{};
-	frame.can_id = can_id(cmd_id, cfg_.node_id);
+	frame.can_id = can_id_11 & CAN_SFF_MASK;
 	frame.can_dlc = len;
 	if (data && len > 0) {
-		std::memcpy(frame.data, data, len);
+		std::memcpy(frame.data, data, std::min<uint8_t>(len, 8));
 	}
 	const ssize_t n = write(socket_fd_, &frame, sizeof(frame));
 	return n == static_cast<ssize_t>(sizeof(frame));
+}
+
+bool ODriveCan::send_frame(uint16_t cmd_id, const void* data, uint8_t len) const {
+	return send_raw_frame(can_id(cmd_id, cfg_.node_id), data, len);
+}
+
+bool ODriveCan::wake_autobaud(int timeout_ms) {
+	if (socket_fd_ < 0) {
+		return false;
+	}
+	// Any host traffic ≥10 Hz wakes ODrive autobaud out of silent scan mode.
+	flush_rx();
+	if (check_heartbeat()) {
+		return true;
+	}
+
+	log_info("motor", "CAN quiet — sending autobaud beacon for up to "
+		+ std::to_string(timeout_ms) + " ms");
+	const auto deadline = std::chrono::steady_clock::now()
+		+ std::chrono::milliseconds(timeout_ms);
+	// Harmless ID: our node Get_Version (empty). Docs: any ID/payload works.
+	const uint32_t beacon_id = can_id(0x000, cfg_.node_id);
+	while (std::chrono::steady_clock::now() < deadline) {
+		send_raw_frame(beacon_id, nullptr, 0);
+		// Short poll for cyclic heartbeat instead of full rx_timeout each loop.
+		pollfd pfd{};
+		pfd.fd = socket_fd_;
+		pfd.events = POLLIN;
+		if (poll(&pfd, 1, 50) > 0) {
+			can_frame frame{};
+			if (read(socket_fd_, &frame, sizeof(frame))
+					>= static_cast<ssize_t>(sizeof(can_frame))) {
+				const uint32_t id = frame.can_id & CAN_SFF_MASK;
+				const uint16_t cmd = static_cast<uint16_t>(id & 0x1F);
+				const uint8_t node = static_cast<uint8_t>((id >> 5) & 0x3F);
+				if (node == cfg_.node_id && cmd == CMD_HEARTBEAT) {
+					log_info("motor", "ODrive heartbeat after autobaud beacon");
+					return true;
+				}
+			}
+		}
+	}
+	return check_heartbeat();
 }
 
 bool ODriveCan::recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len_out) const {

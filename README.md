@@ -195,6 +195,10 @@ in and re-run `make` — no separate `systemctl` / `modprobe` / `ip link` steps.
 
 Optional heartbeat smoke test (ODrive powered): `sudo apt install can-utils && candump can0 -xct z -n 10`.
 
+**Autobaud:** with `can.config.baud_rate = 0`, the ODrive stays silent until it
+sees host CAN traffic. `can0-up.sh` and every `PreyMotor::connect()` send a short
+beacon (≥10 Hz) so heartbeats (`7C1` for node 62) appear without a manual `cangen`.
+
 ODrive CAN/node ID is a separate one-time drive setting (odrivetool/Web GUI) —
 already done on this lab rig; only needed again if NVM is wiped.
 
