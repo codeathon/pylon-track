@@ -75,13 +75,13 @@ Ferret: (450, 320)mm  850mm/s  45deg  |  Prey: (520, 410)mm  120mm/s  90deg  |  
 pylon-track/
 ├── CMakeLists.txt
 ├── config/
-│   └── arena_experiment.json   Chase policy, motor, vision masks, trap door
+│   └── arena_experiment.json   Chase policy, motor, vision masks, shuttle motor
 ├── include/
 │   ├── calibrate/              SetupRunner + one-time calibrators
 │   ├── camera/                 Camera config + lens calib loader
 │   ├── experiment/             State manager, session recorder, trial FSM
 │   ├── log/
-│   ├── motor/                  ODrive CAN, chase policy, LabJack trap
+│   ├── motor/                  ODrive CAN, chase policy, LabJack shuttle motor
 │   ├── tracker/                FerretTracker wrapper, display
 │   └── vision/                 Pipeline, associator, arena mask
 ├── src/
@@ -219,7 +219,7 @@ Session output: `sessions/arena_experiment/<timestamp>/telemetry.csv` + `events.
 |---------|------------|---------|
 | `vision` | `ignore_regions`, `track_roi` | Mask pulleys/chains; animal area priors |
 | `motor` | `can_interface`, `node_id`, `chain_mm_per_motor_turn`, `chain_direction_sign` | ODrive CAN prey motor |
-| `trap_door` | `backend` (`noop` / `labjack`), `labjack.dio_pin` | Trap door DIO via LabJack LJM |
+| `shuttle` | `backend` (`noop` / `labjack`), `wobble_leg_ms`, `end_pulse_ms`, `hallway_high_turns`, `hallway_low_turns`, `labjack.pin_a`/`pin_b`/`high_voltage` | Shuttle motor via LabJack analog H-bridge (FIO4/FIO5 are analog-capable, not fixed digital — `high_voltage` sets the "on" level) |
 | `chase_policy` | `threat_distance_mm`, `cone_half_angle_deg`, speed limits | Cone-of-impact flee policy |
 | `trial` | `timeout_s` | Trial timeout (future use) |
 

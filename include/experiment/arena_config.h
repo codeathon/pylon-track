@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
-#include "motor/trap_door_motor.h"
+#include "motor/shuttle_motor.h"
 #include "vision/arena_mask.h"
 
 // Chase policy gains for Phase 1; loaded early so config path is wired in Phase 0.
@@ -36,7 +36,7 @@ struct VisionConfig {
 struct ArenaExperimentConfig {
 	ChasePolicyConfig chase;
 	MotorConfig motor;
-	TrapDoorConfig trap_door;
+	ShuttleMotorConfig shuttle;
 	VisionConfig vision;
 	double trial_timeout_s = 120.0;
 };

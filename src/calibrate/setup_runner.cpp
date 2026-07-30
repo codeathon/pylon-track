@@ -80,7 +80,7 @@ int SetupRunner::run() {
 	}
 
 	if (ok && should_run(SetupStep::LabJack)) {
-		print_setup_banner("LabJack trap door", ++step_num, kTotal);
+		print_setup_banner("LabJack shuttle motor", ++step_num, kTotal);
 		LabjackCalibrator labjack(opts_);
 		if (!labjack.run(cfg)) {
 			log_error("setup", "LabJack step failed");

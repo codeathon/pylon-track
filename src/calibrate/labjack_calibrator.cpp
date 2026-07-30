@@ -1,38 +1,38 @@
 #include "calibrate/labjack_calibrator.h"
 
-#include <iostream>
+#include <chrono>
+#include <thread>
 
 #include "calibrate/setup_util.h"
 #include "log/logger.h"
-#include "motor/trap_door_motor.h"
+#include "motor/shuttle_motor.h"
 
 LabjackCalibrator::LabjackCalibrator(const SetupOptions& opts) : opts_(opts) {}
 
 bool LabjackCalibrator::run(const ArenaExperimentConfig& cfg) {
-	if (cfg.trap_door.backend == "noop") {
-		log_info("setup", "Trap door noop backend — skipping hardware test");
+	if (cfg.shuttle.backend == "noop") {
+		log_info("setup", "Shuttle motor noop backend — skipping hardware test");
 		return true;
 	}
 
-	TrapDoorMotor trap(cfg.trap_door);
-	if (!trap.connect()) {
-		log_error("setup", "Trap door connect failed");
+	ShuttleMotor shuttle(cfg.shuttle);
+	if (!shuttle.connect()) {
+		log_error("setup", "Shuttle motor connect failed");
 		return false;
 	}
 
-	log_info("setup", "Opening trap door...");
-	if (!trap.open_trap()) {
-		log_error("setup", "Trap door open failed");
-		return false;
-	}
+	log_info("setup", "Wobbling shuttle motor for 3s...");
+	shuttle.start();
+	std::this_thread::sleep_for(std::chrono::seconds(3));
+	shuttle.stop();
 
 	if (!opts_.skip_interactive) {
-		const bool ok = prompt_yes_no("Did the trap door open and close? [y/n]: ");
+		const bool ok = prompt_yes_no("Did the motor wobble back and forth? [y/n]: ");
 		if (!ok) {
-			log_error("setup", "Operator rejected trap door motion");
+			log_error("setup", "Operator rejected shuttle motor motion");
 			return false;
 		}
 	}
-	log_info("setup", "LabJack trap door verified");
+	log_info("setup", "LabJack shuttle motor verified");
 	return true;
 }

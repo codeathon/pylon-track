@@ -3,7 +3,7 @@
 #include "calibrate/setup_options.h"
 #include "experiment/arena_config.h"
 
-// LabJack trap door connect + open/close verification.
+// LabJack shuttle motor connect + wobble verification.
 class LabjackCalibrator {
 public:
 	explicit LabjackCalibrator(const SetupOptions& opts);
