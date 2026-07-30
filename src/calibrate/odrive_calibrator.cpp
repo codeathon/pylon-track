@@ -79,10 +79,14 @@ bool ODriveCalibrator::run(const std::string& config_path, ArenaExperimentConfig
 		}
 	}
 
+	// Motion test always commands +1 turn/s (ODrive units). Direction sign is
+	// only applied later in the short jog / saved chain_direction_sign.
+	const float cmd_turns_s = kTestTurnsPerS;
+
 	// Arm closed-loop only after the operator is ready — a prior Enter wait
 	// let the ODrive watchdog disarm before Set_Input_Vel started.
 	if (!opts_.skip_interactive) {
-		std::cout << "\nTest spin: " << (kTestTurnsPerS * sign) << " turns/s for "
+		std::cout << "\nTest spin: " << cmd_turns_s << " turns/s for "
 			<< kTestDurationS << "s\nKeep hands clear of the chain.\n";
 		prompt_enter("Press Enter to arm motor and start test spin...");
 	}
@@ -93,7 +97,6 @@ bool ODriveCalibrator::run(const std::string& config_path, ArenaExperimentConfig
 	}
 
 	const float pos_before = motor.read_position_turns();
-	const float cmd_turns_s = kTestTurnsPerS * static_cast<float>(sign);
 	float vel_sample = 0.0f;
 	uint32_t axis_err = 0;
 	uint32_t axis_state = 0;
