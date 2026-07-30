@@ -36,24 +36,6 @@ int64_t host_time_ns() {
 		std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-std::string resolve_arena_config_path(const char* argv0, const std::string& user_path) {
-	if (!user_path.empty()) {
-		return user_path;
-	}
-	const std::filesystem::path exe_dir = std::filesystem::path(argv0).parent_path();
-	const std::filesystem::path candidates[] = {
-		exe_dir / "arena_experiment.json",
-		exe_dir / "config" / "arena_experiment.json",
-		std::filesystem::path("config") / "arena_experiment.json",
-	};
-	for (const auto& path : candidates) {
-		if (std::filesystem::exists(path)) {
-			return path.string();
-		}
-	}
-	return {};
-}
-
 } // namespace
 
 const char* component_status_name(ComponentStatus status) {
