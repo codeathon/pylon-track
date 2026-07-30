@@ -93,6 +93,15 @@ bool load_arena_experiment_config(const std::string& path, ArenaExperimentConfig
 				out.chase.threat_distance_mm);
 			out.chase.creep_distance_mm = json_or(c, "creep_distance_mm",
 				out.chase.creep_distance_mm);
+			out.chase.flee_threat_threshold = json_or(c, "flee_threat_threshold",
+				out.chase.flee_threat_threshold);
+			out.chase.min_flee_mm = json_or(c, "min_flee_mm", out.chase.min_flee_mm);
+			out.chase.max_flee_mm = json_or(c, "max_flee_mm", out.chase.max_flee_mm);
+			out.chase.flee_gap_gain = json_or(c, "flee_gap_gain", out.chase.flee_gap_gain);
+			out.chase.flee_speed_gain = json_or(c, "flee_speed_gain",
+				out.chase.flee_speed_gain);
+			out.chase.flee_accel_mps2 = json_or(c, "flee_accel_mps2",
+				out.chase.flee_accel_mps2);
 		}
 		if (j.contains("motor")) {
 			const auto& m = j.at("motor");

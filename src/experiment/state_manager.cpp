@@ -94,8 +94,9 @@ bool ExperimentStateManager::phase_setup() {
 	prey_motor_ = std::make_unique<PreyMotor>(prey_motor_from_config(cfg_.motor));
 	trap_motor_ = std::make_unique<TrapDoorMotor>(cfg_.trap_door);
 	motion_planner_ = std::make_unique<MotionPlanner>();
+	// Why: chase flees tick MotionPlanner non-blockingly at 50 Hz.
 	chase_controller_ = std::make_unique<ChaseController>(
-		*prey_motor_, cfg_.chase, cfg_.motor.chain_direction_sign);
+		*prey_motor_, *motion_planner_, cfg_.chase, cfg_.motor.chain_direction_sign);
 
 	log_info("experiment", "Setup complete — config: " + cfg_path);
 	return true;

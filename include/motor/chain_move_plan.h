@@ -56,29 +56,37 @@ inline ChainMovePlan plan_chain_move(float distance_mm, int duration_ms,
 
 	p.duration_s = static_cast<float>(duration_ms) / 1000.0f;
 	const float distance_m = distance_mm / 1000.0f;
-	p.avg_speed_mps = distance_m / p.duration_s;
+	const float abs_x = std::fabs(distance_m);
+	const float T = p.duration_s;
+	const float a = p.accel_mps2;
+	p.avg_speed_mps = distance_m / T;
 
-	// a_min for a triangle covering |x| in T: peak=2|x|/T, a = 2*peak/T = 4|x|/T^2
-	p.min_accel_mps2 = 4.0f * std::fabs(distance_m) / (p.duration_s * p.duration_s);
+	// Triangle covering |x| in T needs a_min = 4|x|/T^2 (peak = 2|x|/T = a_min*T/2).
+	p.min_accel_mps2 = 4.0f * abs_x / (T * T);
+	p.accel_ok = a + 1e-6f >= p.min_accel_mps2;
 
-	float peak_abs = 2.0f * std::fabs(distance_m) / p.duration_s;
-	const float peak_accel_cap = p.accel_mps2 * p.duration_s * 0.5f;
-	p.accel_ok = peak_abs <= peak_accel_cap + 1e-6f;
-	if (!p.accel_ok) {
-		peak_abs = peak_accel_cap;
+	float peak_abs = 0.0f;
+	if (p.accel_ok) {
+		// Why: triangle peak 2|x|/T with cruise overshoots. Solve trapezoid
+		// |x| = v*T - v^2/a  →  v = (aT - sqrt((aT)^2 - 4a|x|)) / 2.
+		const float disc = std::max(0.0f, (a * T) * (a * T) - 4.0f * a * abs_x);
+		peak_abs = 0.5f * (a * T - std::sqrt(disc));
+	} else {
+		// Best effort: bang-bang triangle at accel limit (short of |x|).
+		peak_abs = a * T * 0.5f;
 	}
 
 	p.peak_speed_mps = std::copysign(peak_abs, distance_m);
-	p.accel_time_s = (peak_abs > 1e-6f) ? (peak_abs / p.accel_mps2) : 0.0f;
-	p.cruise_time_s = std::max(0.0f, p.duration_s - 2.0f * p.accel_time_s);
+	p.accel_time_s = (peak_abs > 1e-6f && a > 1e-6f) ? (peak_abs / a) : 0.0f;
+	p.cruise_time_s = std::max(0.0f, T - 2.0f * p.accel_time_s);
 
-	// Triangle: x = v*T/2. Trapezoid: x = v*(T - t_accel).
+	// Triangle: x = v*T/2. Trapezoid: x = v*(T - t_accel) = v*T - v^2/a.
 	if (p.cruise_time_s <= 1e-6f) {
 		p.expected_distance_mm = std::copysign(
-			1000.0f * peak_abs * p.duration_s * 0.5f, distance_mm);
+			1000.0f * peak_abs * T * 0.5f, distance_mm);
 	} else {
 		p.expected_distance_mm = std::copysign(
-			1000.0f * peak_abs * (p.duration_s - p.accel_time_s), distance_mm);
+			1000.0f * peak_abs * (T - p.accel_time_s), distance_mm);
 	}
 
 	if (p.scale_ok) {
