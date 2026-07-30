@@ -175,17 +175,16 @@ USB-CAN adapters (e.g. ODrive USB-CAN / candleLight) need a kernel driver, then
 `can0` brought up at **250000**
 ([ODrive host guide](https://docs.odriverobotics.com/v/latest/guides/can-guide.html#id4)).
 
-**`make` bundles this** (default `INSTALL_CAN0_HOST=ON`): with sudo it
-
-1. Loads `gs_usb` / `peak_usb` and installs them in `/etc/modules-load.d/`
-2. Installs/enables `pylon-track-can0.service`
-3. Brings `can0` **UP** (fails the build if no USB-CAN adapter is present)
+**`make` is the one entry point** (default `INSTALL_CAN0_HOST=ON`): with sudo it
+loads drivers, installs the reboot unit, runs `can0-up.sh`, and **fails the build**
+if `can0` is not administratively UP afterward. No separate `systemctl` / `ip link`
+steps. Check CMakeCache if it was turned off during debugging:
 
 ```bash
-cd build
-cmake -DPYLON_ROOT=/opt/pylon ..
-make                 # may prompt for sudo; requires USB-CAN plugged in
-ip addr show can0    # expect <...,UP,...>
+grep INSTALL_CAN0_HOST CMakeCache.txt   # should be ON
+cmake -DINSTALL_CAN0_HOST=ON ..
+make                                    # prompts sudo; leaves can0 UP
+ip addr show can0                       # must show UP in <...> flags
 ```
 
 Skip with `-DINSTALL_CAN0_HOST=OFF`.

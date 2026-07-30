@@ -316,25 +316,29 @@ if(UNIX)
 	)
 
 	# ── SocketCAN can0 host bring-up (ODrive USB-CAN adapter) ─────────────
-	# Lab flow: cmake && make — ALL runs this with sudo so can0 ends UP.
+	# Lab flow: cmake && make — ALL (and arena_experiment) run this with sudo.
+	# Success criterion: can0 administratively UP, or make fails.
 	include(GNUInstallDirs)
-	option(INSTALL_CAN0_HOST "Install/enable SocketCAN can0 during make (needs sudo)" ON)
+	option(INSTALL_CAN0_HOST "Bring up SocketCAN can0 during make (needs sudo)" ON)
 	if(INSTALL_CAN0_HOST)
 		configure_file(
 			${CMAKE_SOURCE_DIR}/scripts/pylon-track-can0.service.in
 			${CMAKE_BINARY_DIR}/pylon-track-can0.service
 			@ONLY
 		)
-		# Default `make` installs unit + brings can0 UP (sudo password once).
 		add_custom_target(can0_host ALL
 			COMMAND sudo ${CMAKE_SOURCE_DIR}/scripts/install-can0-host.sh
 				${CMAKE_BINARY_DIR}/pylon-track-can0.service
 				${CMAKE_SOURCE_DIR}/scripts/can0-up.sh
 				${CMAKE_INSTALL_FULL_SBINDIR}
 			DEPENDS ${CMAKE_BINARY_DIR}/pylon-track-can0.service
-			COMMENT "Install/enable SocketCAN can0 @ 250 kbit/s (sudo)"
+			COMMENT "SocketCAN: install drivers/unit and bring can0 UP (sudo)"
 			VERBATIM
+			USES_TERMINAL
 		)
+		# So `make arena_experiment` alone still brings can0 UP.
+		add_dependencies(arena_experiment can0_host)
+
 		install(PROGRAMS ${CMAKE_SOURCE_DIR}/scripts/can0-up.sh
 			DESTINATION ${CMAKE_INSTALL_SBINDIR})
 		install(PROGRAMS ${CMAKE_SOURCE_DIR}/scripts/install-can0-host.sh
@@ -347,12 +351,12 @@ if(UNIX)
 
 	message(STATUS
 		"Linux targets available:\n"
-		"  make                  — build binaries + install/enable can0 (sudo)\n"
+		"  make                  — build + bring can0 UP (sudo; INSTALL_CAN0_HOST)\n"
+		"  make arena_experiment — build experiment + bring can0 UP\n"
 		"  make ferret_tracker   — build → bin/ferret_tracker\n"
-		"  make arena_experiment — build → bin/arena_experiment\n"
 		"  make run_rt           — run with SCHED_FIFO priority (low jitter)\n"
 		"  make install_udev     — install udev rules for USB camera access\n"
-		"  -DINSTALL_CAN0_HOST=OFF to skip SocketCAN install on make")
+		"  -DINSTALL_CAN0_HOST=OFF to skip SocketCAN on make")
 
 	# ── Calibration test suite (tests/) ───────────────────────────────────
 	# Camera-attached tools: parameter sweep, latency benchmark, mount
