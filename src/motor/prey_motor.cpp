@@ -114,6 +114,8 @@ bool PreyMotor::enter_velocity_mode(int timeout_ms) {
 	if (!status_.connected) {
 		return false;
 	}
+	// Stale disarm/watchdog faults block CLOSED_LOOP until cleared.
+	can_.clear_errors();
 	return can_.enter_velocity_mode(timeout_ms);
 }
 
@@ -129,4 +131,11 @@ bool PreyMotor::set_velocity_turns_s(float turns_s) {
 float PreyMotor::read_position_turns() const {
 	refresh_status();
 	return status_.position_turns;
+}
+
+bool PreyMotor::read_axis_state(uint32_t& axis_error, uint32_t& axis_state) const {
+	if (!status_.connected) {
+		return false;
+	}
+	return can_.get_axis_state(axis_error, axis_state);
 }

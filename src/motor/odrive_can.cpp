@@ -24,6 +24,7 @@ constexpr uint16_t CMD_GET_ENCODER_ESTIMATES = 0x009;
 constexpr uint16_t CMD_SET_INPUT_VEL = 0x00d;
 constexpr uint16_t CMD_SET_AXIS_STATE = 0x007;
 constexpr uint16_t CMD_SET_CONTROLLER_MODE = 0x00b;
+constexpr uint16_t CMD_CLEAR_ERRORS = 0x018;
 
 constexpr uint32_t AXIS_STATE_CLOSED_LOOP_CONTROL = 8;
 constexpr int32_t CONTROL_MODE_VELOCITY_CONTROL = 2;
@@ -159,6 +160,12 @@ bool ODriveCan::send_estop() {
 	return send_frame(CMD_ESTOP, nullptr, 0);
 }
 
+bool ODriveCan::clear_errors() {
+	// Identify=0: clear only (do not blink status LED).
+	const uint8_t identify = 0;
+	return send_frame(CMD_CLEAR_ERRORS, &identify, 1);
+}
+
 bool ODriveCan::check_heartbeat() const {
 	// Heartbeat is cyclic (~100 ms) from the drive — do not TX a fake request.
 	uint8_t buf[8] = {};
@@ -204,11 +211,20 @@ bool ODriveCan::enter_velocity_mode(int timeout_ms) {
 		uint32_t err = 0;
 		uint32_t state = 0;
 		if (get_axis_state(err, state) && state == AXIS_STATE_CLOSED_LOOP_CONTROL) {
+			// Feed watchdog immediately — Enter waits used to disarm before spin.
+			set_input_velocity(0.0f, 0.0f);
 			log_info("motor", "ODrive axis in closed-loop velocity mode");
 			return true;
 		}
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
-	log_error("motor", "Timed out waiting for closed-loop control");
+	uint32_t err = 0;
+	uint32_t state = 0;
+	if (get_axis_state(err, state)) {
+		log_error("motor", "Timed out waiting for closed-loop control (state="
+			+ std::to_string(state) + " err=0x" + std::to_string(err) + ")");
+	} else {
+		log_error("motor", "Timed out waiting for closed-loop control");
+	}
 	return false;
 }

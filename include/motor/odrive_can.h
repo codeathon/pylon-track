@@ -24,6 +24,7 @@ public:
 	bool get_encoder_estimates(float& pos_turns, float& vel_turns_s) const;
 	bool set_input_velocity(float turns_s, float torque_ff = 0.0f);
 	bool send_estop();
+	bool clear_errors();
 	bool check_heartbeat() const;
 
 	// CANSimple setup — used by ODriveCalibrator during one-time setup.
