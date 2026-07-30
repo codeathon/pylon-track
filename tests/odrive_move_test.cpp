@@ -57,7 +57,8 @@ struct Args {
 	float distance_mm = 0.0f;
 	float speed_mmps = 0.0f;
 	int duration_ms = 0;
-	float accel_mps2 = 0.5f;
+	// Higher default so short/fast lab moves can actually reach cruise.
+	float accel_mps2 = 5.0f;
 	float vel_turns_s = 0.0f;
 	float seconds = 0.0f;
 	bool verbose = false;
@@ -233,9 +234,13 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	const float preview_turns_s = motor.chain_mps_to_turns_s(args.speed_mmps / 1000.0f);
+	const float avg_mmps = std::fabs(args.distance_mm)
+		/ (static_cast<float>(duration_ms) / 1000.0f);
+	const float preview_turns_s = motor.chain_mps_to_turns_s(
+		(args.have_speed ? args.speed_mmps : avg_mmps) / 1000.0f);
 	std::cout << "Move " << args.distance_mm << " mm in " << duration_ms
-		<< " ms (≈" << preview_turns_s << " turns/s at cruise speed)\n";
+		<< " ms (≈" << preview_turns_s << " turns/s, accel "
+		<< args.accel_mps2 << " m/s^2)\n";
 
 	if (!connect_motor(motor)) {
 		return 1;
