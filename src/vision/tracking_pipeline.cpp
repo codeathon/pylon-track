@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include "log/logger.h"
-#include "tracker.h"
+#include "tracker/tracker.h"
 
 TrackingPipeline::TrackingPipeline(int warmup_frames, float gsd_mm_px, float fps,
 	std::optional<CameraCalib> calib, std::optional<ArenaMaskConfig> mask_cfg,
