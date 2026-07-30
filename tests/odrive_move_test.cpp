@@ -11,6 +11,7 @@
 #include <cmath>
 #include <csignal>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -147,6 +148,11 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
+	// Why: lab often edits a different copy than ../config from build/.
+	std::error_code ec;
+	const auto abs_cfg = std::filesystem::absolute(args.config_path, ec);
+	std::cout << "Config file: "
+		<< (ec ? args.config_path : abs_cfg.string()) << '\n';
 	std::cout << "CAN " << cfg.motor.can_interface
 		<< " node " << static_cast<int>(cfg.motor.node_id)
 		<< ", chain_mm_per_turn=" << cfg.motor.chain_mm_per_motor_turn
