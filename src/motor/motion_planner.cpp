@@ -34,6 +34,12 @@ bool MotionPlanner::move_distance_mm_in_time(PreyMotor& motor, float distance_mm
 		log_error("motor", "move_distance_mm_in_time: motor not connected");
 		return false;
 	}
+	if (!motor.has_valid_chain_scale()) {
+		log_error("motor",
+			"move_distance_mm_in_time: chain scale is 0 — set "
+			"motor.chain_mm_per_motor_turn in arena_experiment.json (e.g. 157)");
+		return false;
+	}
 	if (duration_ms <= 0) {
 		log_error("motor", "move_distance_mm_in_time: invalid duration");
 		return false;
@@ -45,25 +51,32 @@ bool MotionPlanner::move_distance_mm_in_time(PreyMotor& motor, float distance_mm
 
 	const float distance_m = distance_mm / 1000.0f;
 	const float duration_s = static_cast<float>(duration_ms) / 1000.0f;
-	const float avg_speed = distance_m / duration_s;
 	const float accel = (max_accel_mps2 > 0.0f) ? max_accel_mps2 : 0.5f;
 
-	// Triangular profile when distance is too short for full accel cruise.
-	float peak_speed = avg_speed * 2.0f;
-	const float min_peak = std::sqrt(accel * std::fabs(distance_m));
-	if (peak_speed < min_peak) {
-		peak_speed = min_peak;
+	// Peak for a triangle that covers |distance| in duration_s: v = 2x/t.
+	// Cap by accel so accel+decel fit in the window (v_max = a*t/2).
+	// Why: old math used peak=2*avg then ignored when accel_time > duration,
+	// so short/fast moves barely ramped before stop().
+	float peak_abs = 2.0f * std::fabs(distance_m) / duration_s;
+	const float peak_accel_cap = accel * duration_s * 0.5f;
+	if (peak_abs > peak_accel_cap) {
+		log_info("motor", "Accel limit caps peak to "
+			+ std::to_string(peak_accel_cap)
+			+ " m/s — raise max_accel_mps2 for short/fast moves");
+		peak_abs = peak_accel_cap;
 	}
-	peak_speed = std::copysign(peak_speed, distance_m);
-
-	const float accel_time = std::fabs(peak_speed) / accel;
+	const float peak_speed = std::copysign(peak_abs, distance_m);
+	const float accel_time = (peak_abs > 1e-6f) ? (peak_abs / accel) : 0.0f;
 	const float cruise_time = std::max(0.0f, duration_s - 2.0f * accel_time);
 
 	const auto start = std::chrono::steady_clock::now();
 	float elapsed_s = 0.0f;
 
+	const float peak_turns_s = motor.chain_mps_to_turns_s(peak_speed);
 	log_info("motor", "Move " + std::to_string(static_cast<int>(distance_mm))
-		+ " mm in " + std::to_string(duration_ms) + " ms");
+		+ " mm in " + std::to_string(duration_ms) + " ms (peak "
+		+ std::to_string(peak_speed) + " m/s ≈ "
+		+ std::to_string(peak_turns_s) + " turns/s)");
 
 	while (!cancel_.load()) {
 		elapsed_s = std::chrono::duration<float>(

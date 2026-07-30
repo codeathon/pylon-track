@@ -4,6 +4,17 @@
 
 #ifdef PYLON_TRACK_HAS_LJM
 #include <LabJackM.h>
+
+namespace {
+
+// LJM_ErrorToString writes into a caller buffer (void return in current LJM).
+std::string ljm_error_string(int err) {
+	char buf[LJM_MAX_NAME_SIZE] = {};
+	LJM_ErrorToString(err, buf);
+	return buf;
+}
+
+} // namespace
 #endif
 
 LabJackIo::LabJackIo(const LabJackConfig& cfg) : cfg_(cfg) {}
@@ -24,7 +35,7 @@ bool LabJackIo::open() {
 	const int err = LJM_OpenS(cfg_.device_type.c_str(),
 		cfg_.connection.c_str(), cfg_.identifier.c_str(), &handle_);
 	if (err != LJME_NOERROR) {
-		log_error("motor", "LabJack open failed: " + std::string(LJM_ErrorToString(err)));
+		log_error("motor", "LabJack open failed: " + ljm_error_string(err));
 		handle_ = -1;
 		return false;
 	}
@@ -55,7 +66,7 @@ bool LabJackIo::write_dio(double value) {
 	const int err = LJM_eWriteName(handle_, cfg_.dio_pin.c_str(), line);
 	if (err != LJME_NOERROR) {
 		log_error("motor", "LabJack write " + cfg_.dio_pin + " failed: "
-			+ std::string(LJM_ErrorToString(err)));
+			+ ljm_error_string(err));
 		return false;
 	}
 	return true;

@@ -23,4 +23,6 @@ struct SetupOptions {
 	bool skip_interactive = false;
 	bool display = false;
 	SetupStep only = SetupStep::All;
+	// ODrive setup test-spin duration (seconds).
+	float spin_seconds = 10.0f;
 };

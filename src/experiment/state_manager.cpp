@@ -8,6 +8,7 @@
 #include <pylon/PylonIncludes.h>
 #include <pylon/BaslerUniversalInstantCamera.h>
 
+#include "calibrate/setup_util.h"
 #include "camera/camera_calib.h"
 #include "camera/camera_config.h"
 #include "camera/camera_settings.h"
@@ -33,24 +34,6 @@ constexpr int kMainLoopSleepMs = 5;
 int64_t host_time_ns() {
 	return std::chrono::duration_cast<std::chrono::nanoseconds>(
 		std::chrono::steady_clock::now().time_since_epoch()).count();
-}
-
-std::string resolve_arena_config_path(const char* argv0, const std::string& user_path) {
-	if (!user_path.empty()) {
-		return user_path;
-	}
-	const std::filesystem::path exe_dir = std::filesystem::path(argv0).parent_path();
-	const std::filesystem::path candidates[] = {
-		exe_dir / "arena_experiment.json",
-		exe_dir / "config" / "arena_experiment.json",
-		std::filesystem::path("config") / "arena_experiment.json",
-	};
-	for (const auto& path : candidates) {
-		if (std::filesystem::exists(path)) {
-			return path.string();
-		}
-	}
-	return {};
 }
 
 } // namespace
@@ -145,7 +128,10 @@ bool ExperimentStateManager::verify_setup_artifacts() {
 
 bool ExperimentStateManager::connect_runtime_hardware() {
 	readiness_.motor = ComponentStatus::Calibrating;
-	if (prey_motor_->connect()) {
+	if (!can_interface_up(cfg_.motor.can_interface)) {
+		log_error("experiment", can_interface_down_hint(cfg_.motor.can_interface));
+		readiness_.motor = ComponentStatus::Error;
+	} else if (prey_motor_->connect()) {
 		readiness_.motor = ComponentStatus::Ready;
 		log_info("experiment", "Prey motor connected");
 	} else {
