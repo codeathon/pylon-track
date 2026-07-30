@@ -8,6 +8,7 @@
 //     --distance-mm -300 --duration-ms 2000
 
 #include <cmath>
+#include <csignal>
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -20,6 +21,19 @@
 #include "motor/prey_motor.h"
 
 namespace {
+
+// Set by SIGINT/SIGTERM so Ctrl+C cancels the trapezoid move cleanly.
+MotionPlanner* g_planner = nullptr;
+PreyMotor* g_motor = nullptr;
+
+void on_stop_signal(int) {
+	if (g_planner) {
+		g_planner->cancel();
+	}
+	if (g_motor) {
+		g_motor->stop();
+	}
+}
 
 void print_usage() {
 	std::cerr <<
@@ -136,9 +150,18 @@ int main(int argc, char** argv) {
 
 	const float pos_before = motor.read_position_turns();
 	MotionPlanner planner;
+	// Why: Ctrl+C should cancel the profile and zero velocity, not leave the axis spinning.
+	g_planner = &planner;
+	g_motor = &motor;
+	std::signal(SIGINT, on_stop_signal);
+	std::signal(SIGTERM, on_stop_signal);
+
+	std::cout << "Press Ctrl+C to abort the move.\n";
 	const bool ok = planner.move_distance_mm_in_time(
 		motor, args.distance_mm, duration_ms, args.accel_mps2);
+	g_planner = nullptr;
 	motor.stop();
+	g_motor = nullptr;
 	const float pos_after = motor.read_position_turns();
 	const float delta_turns = pos_after - pos_before;
 	const float delta_mm = motor.turns_to_chain_mm(delta_turns);
@@ -146,7 +169,7 @@ int main(int argc, char** argv) {
 	std::cout << "Encoder delta: " << delta_turns << " turns ("
 		<< delta_mm << " mm chain)\n";
 	if (!ok) {
-		log_error("test", "MotionPlanner move failed");
+		log_error("test", "MotionPlanner move failed or cancelled");
 		return 1;
 	}
 	log_info("test", "Move complete");
