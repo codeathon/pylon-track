@@ -5,6 +5,7 @@
 #include <cmath>
 #include <thread>
 
+#include "motor/chain_move_plan.h"
 #include "motor/prey_motor.h"
 #include "log/logger.h"
 
@@ -49,34 +50,28 @@ bool MotionPlanner::move_distance_mm_in_time(PreyMotor& motor, float distance_mm
 		return true;
 	}
 
-	const float distance_m = distance_mm / 1000.0f;
-	const float duration_s = static_cast<float>(duration_ms) / 1000.0f;
-	const float accel = (max_accel_mps2 > 0.0f) ? max_accel_mps2 : 0.5f;
-
-	// Peak for a triangle that covers |distance| in duration_s: v = 2x/t.
-	// Cap by accel so accel+decel fit in the window (v_max = a*t/2).
-	// Why: old math used peak=2*avg then ignored when accel_time > duration,
-	// so short/fast moves barely ramped before stop().
-	float peak_abs = 2.0f * std::fabs(distance_m) / duration_s;
-	const float peak_accel_cap = accel * duration_s * 0.5f;
-	if (peak_abs > peak_accel_cap) {
-		log_info("motor", "Accel limit caps peak to "
-			+ std::to_string(peak_accel_cap)
-			+ " m/s — raise max_accel_mps2 for short/fast moves");
-		peak_abs = peak_accel_cap;
+	// Shared planner — keeps MotionPlanner and --plan-only math identical.
+	const ChainMovePlan plan = plan_chain_move(distance_mm, duration_ms,
+		max_accel_mps2, motor.mm_per_turn(), motor.config().chain_direction_sign);
+	if (!plan.accel_ok) {
+		log_info("motor", "Accel limit reduces expected travel to "
+			+ std::to_string(plan.expected_distance_mm)
+			+ " mm — raise --accel-mps2 (need >= "
+			+ std::to_string(plan.min_accel_mps2) + ")");
 	}
-	const float peak_speed = std::copysign(peak_abs, distance_m);
-	const float accel_time = (peak_abs > 1e-6f) ? (peak_abs / accel) : 0.0f;
-	const float cruise_time = std::max(0.0f, duration_s - 2.0f * accel_time);
+
+	const float duration_s = plan.duration_s;
+	const float peak_speed = plan.peak_speed_mps;
+	const float accel_time = plan.accel_time_s;
+	const float cruise_time = plan.cruise_time_s;
 
 	const auto start = std::chrono::steady_clock::now();
 	float elapsed_s = 0.0f;
 
-	const float peak_turns_s = motor.chain_mps_to_turns_s(peak_speed);
 	log_info("motor", "Move " + std::to_string(static_cast<int>(distance_mm))
 		+ " mm in " + std::to_string(duration_ms) + " ms (peak "
 		+ std::to_string(peak_speed) + " m/s ≈ "
-		+ std::to_string(peak_turns_s) + " turns/s)");
+		+ std::to_string(plan.peak_turns_s) + " turns/s)");
 
 	while (!cancel_.load()) {
 		elapsed_s = std::chrono::duration<float>(
@@ -86,11 +81,11 @@ bool MotionPlanner::move_distance_mm_in_time(PreyMotor& motor, float distance_mm
 		}
 
 		float speed_mps = 0.0f;
-		if (elapsed_s < accel_time) {
+		if (accel_time > 1e-6f && elapsed_s < accel_time) {
 			speed_mps = peak_speed * (elapsed_s / accel_time);
 		} else if (elapsed_s < accel_time + cruise_time) {
 			speed_mps = peak_speed;
-		} else {
+		} else if (accel_time > 1e-6f) {
 			const float decel_t = elapsed_s - accel_time - cruise_time;
 			const float decel_frac = std::min(1.0f, decel_t / accel_time);
 			speed_mps = peak_speed * (1.0f - decel_frac);

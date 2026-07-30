@@ -19,6 +19,7 @@
 #include "calibrate/setup_util.h"
 #include "experiment/arena_config.h"
 #include "log/logger.h"
+#include "motor/chain_move_plan.h"
 #include "motor/motor_config.h"
 #include "motor/motion_planner.h"
 #include "motor/prey_motor.h"
@@ -43,13 +44,13 @@ void print_usage() {
 		"  test_odrive_move --config <arena_experiment.json>\n"
 		"                   --distance-mm <mm>\n"
 		"                   (--speed-mmps <mm/s> | --duration-ms <ms>)\n"
-		"                   [--accel-mps2 <m/s^2>] [--verbose]\n"
+		"                   [--accel-mps2 <m/s^2>] [--plan-only] [--verbose]\n"
 		"\n"
 		"  test_odrive_move --config <arena_experiment.json>\n"
 		"                   --vel-turns-s <turns/s> --seconds <s>\n"
 		"\n"
-		"Distance mode uses MotionPlanner. --vel-turns-s bypasses mm conversion\n"
-		"and commands Set_Input_Vel directly (best first check if the motor spins).\n";
+		"--plan-only prints the feasibility checklist (no motor motion).\n"
+		"Distance mode uses MotionPlanner. --vel-turns-s bypasses mm conversion.\n";
 }
 
 struct Args {
@@ -67,6 +68,7 @@ struct Args {
 	bool have_duration = false;
 	bool have_vel_turns = false;
 	bool have_seconds = false;
+	bool plan_only = false;
 };
 
 bool parse_args(int argc, char** argv, Args& args) {
@@ -92,6 +94,8 @@ bool parse_args(int argc, char** argv, Args& args) {
 			args.have_seconds = true;
 		} else if (std::strcmp(argv[i], "--verbose") == 0) {
 			args.verbose = true;
+		} else if (std::strcmp(argv[i], "--plan-only") == 0) {
+			args.plan_only = true;
 		} else if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
 			return false;
 		} else {
@@ -160,12 +164,40 @@ int main(int argc, char** argv) {
 		<< ", pulley_radius_m=" << cfg.motor.pulley_radius_m
 		<< ", direction_sign=" << cfg.motor.chain_direction_sign << '\n';
 
+	PreyMotor motor(prey_motor_from_config(cfg.motor));
+
+	// Distance / duration planning (no CAN required for --plan-only).
+	if (args.have_distance && !args.have_vel_turns) {
+		int duration_ms = args.duration_ms;
+		if (args.have_speed) {
+			if (std::fabs(args.speed_mmps) < 1e-3f) {
+				log_error("test", "--speed-mmps must be non-zero");
+				return 1;
+			}
+			duration_ms = static_cast<int>(std::lround(
+				std::fabs(args.distance_mm) / std::fabs(args.speed_mmps) * 1000.0f));
+			if (duration_ms < 1) {
+				duration_ms = 1;
+			}
+		}
+		const ChainMovePlan plan = plan_chain_move(args.distance_mm, duration_ms,
+			args.accel_mps2, motor.mm_per_turn(), cfg.motor.chain_direction_sign);
+		std::cout << plan.summary;
+		if (args.plan_only) {
+			return plan.feasible ? 0 : 1;
+		}
+		if (!plan.feasible) {
+			log_error("test", "Plan not feasible — fix parameters above, or pass "
+				"--plan-only to inspect without moving");
+			return 1;
+		}
+	}
+
 	if (!can_interface_up(cfg.motor.can_interface)) {
 		log_error("test", can_interface_down_hint(cfg.motor.can_interface));
 		return 1;
 	}
 
-	PreyMotor motor(prey_motor_from_config(cfg.motor));
 	g_motor = &motor;
 	std::signal(SIGINT, on_stop_signal);
 	std::signal(SIGTERM, on_stop_signal);
@@ -209,38 +241,14 @@ int main(int argc, char** argv) {
 		return 0;
 	}
 
-	if (cfg.motor.chain_mm_per_motor_turn <= 0.0f
-			&& cfg.motor.pulley_radius_m <= 0.0f) {
-		log_error("test",
-			"motor.chain_mm_per_motor_turn and motor.pulley_radius_m are both 0");
-		return 1;
-	}
-	if (!motor.has_valid_chain_scale()) {
-		log_error("test", "Invalid chain scale after config load");
-		return 1;
-	}
-	std::cout << "Effective scale: " << motor.mm_per_turn() << " mm/motor-turn\n";
-
 	int duration_ms = args.duration_ms;
 	if (args.have_speed) {
-		if (std::fabs(args.speed_mmps) < 1e-3f) {
-			log_error("test", "--speed-mmps must be non-zero");
-			return 1;
-		}
 		duration_ms = static_cast<int>(
 			std::lround(std::fabs(args.distance_mm) / std::fabs(args.speed_mmps) * 1000.0f));
 		if (duration_ms < 1) {
 			duration_ms = 1;
 		}
 	}
-
-	const float avg_mmps = std::fabs(args.distance_mm)
-		/ (static_cast<float>(duration_ms) / 1000.0f);
-	const float preview_turns_s = motor.chain_mps_to_turns_s(
-		(args.have_speed ? args.speed_mmps : avg_mmps) / 1000.0f);
-	std::cout << "Move " << args.distance_mm << " mm in " << duration_ms
-		<< " ms (≈" << preview_turns_s << " turns/s, accel "
-		<< args.accel_mps2 << " m/s^2)\n";
 
 	if (!connect_motor(motor)) {
 		return 1;
