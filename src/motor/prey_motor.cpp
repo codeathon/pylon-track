@@ -83,6 +83,13 @@ void PreyMotor::apply(const MotorCommand& cmd) {
 		return;
 	}
 	if (cmd.mode == MotorMode::Velocity) {
+		if (!has_valid_chain_scale() && std::fabs(cmd.velocity_mps) > 1e-6f) {
+			// Why: both chain_mm_per_motor_turn and pulley_radius_m were 0 in lab JSON.
+			log_error("motor",
+				"Cannot command chain velocity — set motor.chain_mm_per_motor_turn "
+				"(e.g. 157) or motor.pulley_radius_m in arena_experiment.json");
+			return;
+		}
 		const float turns_s = chain_mps_to_turns_s(cmd.velocity_mps);
 		can_.set_input_velocity(turns_s, 0.0f);
 		refresh_status();

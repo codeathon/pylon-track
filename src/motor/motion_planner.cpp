@@ -34,6 +34,12 @@ bool MotionPlanner::move_distance_mm_in_time(PreyMotor& motor, float distance_mm
 		log_error("motor", "move_distance_mm_in_time: motor not connected");
 		return false;
 	}
+	if (!motor.has_valid_chain_scale()) {
+		log_error("motor",
+			"move_distance_mm_in_time: chain scale is 0 — set "
+			"motor.chain_mm_per_motor_turn in arena_experiment.json (e.g. 157)");
+		return false;
+	}
 	if (duration_ms <= 0) {
 		log_error("motor", "move_distance_mm_in_time: invalid duration");
 		return false;

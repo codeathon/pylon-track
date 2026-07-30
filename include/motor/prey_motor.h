@@ -38,6 +38,10 @@ public:
 	float chain_mps_to_turns_s(float chain_mps) const;
 	float turns_s_to_chain_mps(float turns_s) const;
 	float turns_to_chain_mm(float turns) const;
+	// False when chain_mm_per_motor_turn and pulley_radius_m are both unset/zero
+	// (MotionPlanner would command 0 turns/s and the chain would not move).
+	bool has_valid_chain_scale() const { return mm_per_turn_ > 1e-3f; }
+	float mm_per_turn() const { return mm_per_turn_; }
 
 	const PreyMotorConfig& config() const { return cfg_; }
 

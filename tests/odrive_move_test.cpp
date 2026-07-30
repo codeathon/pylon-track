@@ -131,10 +131,18 @@ int main(int argc, char** argv) {
 		<< ", chain_mm_per_turn=" << cfg.motor.chain_mm_per_motor_turn
 		<< ", pulley_radius_m=" << cfg.motor.pulley_radius_m
 		<< ", direction_sign=" << cfg.motor.chain_direction_sign << '\n';
+	// Both zero → mm_per_turn=0 → every Set_Input_Vel is 0 (looks like "no motion").
+	if (cfg.motor.chain_mm_per_motor_turn <= 0.0f
+			&& cfg.motor.pulley_radius_m <= 0.0f) {
+		log_error("test",
+			"motor.chain_mm_per_motor_turn and motor.pulley_radius_m are both 0 in "
+			+ args.config_path
+			+ " — set chain_mm_per_motor_turn to ~157 (or pulley_radius_m to 0.025)");
+		return 1;
+	}
 	if (cfg.motor.chain_mm_per_motor_turn <= 0.0f) {
 		log_info("test",
-			"chain_mm_per_motor_turn is 0 — using pulley_radius_m fallback; "
-			"set motor.chain_mm_per_motor_turn in arena_experiment.json for accurate mm");
+			"chain_mm_per_motor_turn is 0 — using pulley_radius_m fallback");
 	}
 
 	if (!can_interface_up(cfg.motor.can_interface)) {
@@ -143,6 +151,11 @@ int main(int argc, char** argv) {
 	}
 
 	PreyMotor motor(prey_motor_from_config(cfg.motor));
+	if (!motor.has_valid_chain_scale()) {
+		log_error("test", "Invalid chain scale after config load");
+		return 1;
+	}
+	std::cout << "Effective scale: " << motor.mm_per_turn() << " mm/motor-turn\n";
 	if (!motor.connect()) {
 		log_error("test", "PreyMotor connect failed");
 		return 1;
