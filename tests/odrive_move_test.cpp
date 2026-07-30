@@ -5,13 +5,15 @@
 //   ./bin/test_odrive_move --config ../config/arena_experiment.json \
 //     --distance-mm 500 --speed-mmps 150
 //   ./bin/test_odrive_move --config ../config/arena_experiment.json \
-//     --distance-mm -300 --duration-ms 2000
+//     --vel-turns-s 1 --seconds 5
 
+#include <chrono>
 #include <cmath>
 #include <csignal>
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <thread>
 
 #include "calibrate/setup_util.h"
 #include "experiment/arena_config.h"
@@ -22,7 +24,6 @@
 
 namespace {
 
-// Set by SIGINT/SIGTERM so Ctrl+C cancels the trapezoid move cleanly.
 MotionPlanner* g_planner = nullptr;
 PreyMotor* g_motor = nullptr;
 
@@ -43,8 +44,11 @@ void print_usage() {
 		"                   (--speed-mmps <mm/s> | --duration-ms <ms>)\n"
 		"                   [--accel-mps2 <m/s^2>] [--verbose]\n"
 		"\n"
-		"Moves the prey chain via MotionPlanner (trapezoid velocity profile).\n"
-		"Distance sign selects direction (uses chain_direction_sign from config).\n";
+		"  test_odrive_move --config <arena_experiment.json>\n"
+		"                   --vel-turns-s <turns/s> --seconds <s>\n"
+		"\n"
+		"Distance mode uses MotionPlanner. --vel-turns-s bypasses mm conversion\n"
+		"and commands Set_Input_Vel directly (best first check if the motor spins).\n";
 }
 
 struct Args {
@@ -53,10 +57,14 @@ struct Args {
 	float speed_mmps = 0.0f;
 	int duration_ms = 0;
 	float accel_mps2 = 0.5f;
+	float vel_turns_s = 0.0f;
+	float seconds = 0.0f;
 	bool verbose = false;
 	bool have_distance = false;
 	bool have_speed = false;
 	bool have_duration = false;
+	bool have_vel_turns = false;
+	bool have_seconds = false;
 };
 
 bool parse_args(int argc, char** argv, Args& args) {
@@ -74,6 +82,12 @@ bool parse_args(int argc, char** argv, Args& args) {
 			args.have_duration = true;
 		} else if (std::strcmp(argv[i], "--accel-mps2") == 0 && i + 1 < argc) {
 			args.accel_mps2 = std::stof(argv[++i]);
+		} else if (std::strcmp(argv[i], "--vel-turns-s") == 0 && i + 1 < argc) {
+			args.vel_turns_s = std::stof(argv[++i]);
+			args.have_vel_turns = true;
+		} else if (std::strcmp(argv[i], "--seconds") == 0 && i + 1 < argc) {
+			args.seconds = std::stof(argv[++i]);
+			args.have_seconds = true;
 		} else if (std::strcmp(argv[i], "--verbose") == 0) {
 			args.verbose = true;
 		} else if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
@@ -83,11 +97,35 @@ bool parse_args(int argc, char** argv, Args& args) {
 			return false;
 		}
 	}
-	if (args.config_path.empty() || !args.have_distance) {
+	if (args.config_path.empty()) {
+		return false;
+	}
+	if (args.have_vel_turns || args.have_seconds) {
+		return args.have_vel_turns && args.have_seconds
+			&& !args.have_distance && !args.have_speed && !args.have_duration;
+	}
+	if (!args.have_distance) {
 		return false;
 	}
 	if (args.have_speed == args.have_duration) {
 		std::cerr << "ERROR: provide exactly one of --speed-mmps or --duration-ms\n";
+		return false;
+	}
+	return true;
+}
+
+bool connect_motor(PreyMotor& motor) {
+	if (!motor.connect()) {
+		log_error("test", "PreyMotor connect failed");
+		return false;
+	}
+	if (!motor.status().heartbeat_ok) {
+		log_error("test",
+			"No ODrive heartbeat — check power/CAN (candump should show 7C1)");
+		return false;
+	}
+	if (!motor.enter_velocity_mode()) {
+		log_error("test", "Failed to enter closed-loop velocity mode");
 		return false;
 	}
 	return true;
@@ -109,41 +147,11 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	int duration_ms = args.duration_ms;
-	if (args.have_speed) {
-		if (std::fabs(args.speed_mmps) < 1e-3f) {
-			log_error("test", "--speed-mmps must be non-zero");
-			return 1;
-		}
-		// duration = distance / speed; speed magnitude only (sign is on distance).
-		duration_ms = static_cast<int>(
-			std::lround(std::fabs(args.distance_mm) / std::fabs(args.speed_mmps) * 1000.0f));
-		if (duration_ms < 1) {
-			duration_ms = 1;
-		}
-	}
-
-	// uint8_t node_id must be cast — iostream otherwise prints ASCII (62 → '>').
-	std::cout << "Move " << args.distance_mm << " mm in " << duration_ms
-		<< " ms (accel " << args.accel_mps2 << " m/s^2)\n"
-		<< "CAN " << cfg.motor.can_interface
+	std::cout << "CAN " << cfg.motor.can_interface
 		<< " node " << static_cast<int>(cfg.motor.node_id)
 		<< ", chain_mm_per_turn=" << cfg.motor.chain_mm_per_motor_turn
 		<< ", pulley_radius_m=" << cfg.motor.pulley_radius_m
 		<< ", direction_sign=" << cfg.motor.chain_direction_sign << '\n';
-	// Both zero → mm_per_turn=0 → every Set_Input_Vel is 0 (looks like "no motion").
-	if (cfg.motor.chain_mm_per_motor_turn <= 0.0f
-			&& cfg.motor.pulley_radius_m <= 0.0f) {
-		log_error("test",
-			"motor.chain_mm_per_motor_turn and motor.pulley_radius_m are both 0 in "
-			+ args.config_path
-			+ " — set chain_mm_per_motor_turn to ~157 (or pulley_radius_m to 0.025)");
-		return 1;
-	}
-	if (cfg.motor.chain_mm_per_motor_turn <= 0.0f) {
-		log_info("test",
-			"chain_mm_per_motor_turn is 0 — using pulley_radius_m fallback");
-	}
 
 	if (!can_interface_up(cfg.motor.can_interface)) {
 		log_error("test", can_interface_down_hint(cfg.motor.can_interface));
@@ -151,48 +159,104 @@ int main(int argc, char** argv) {
 	}
 
 	PreyMotor motor(prey_motor_from_config(cfg.motor));
+	g_motor = &motor;
+	std::signal(SIGINT, on_stop_signal);
+	std::signal(SIGTERM, on_stop_signal);
+
+	// Raw turns/s path — skips mm scale; use this if distance mode shows ~0 delta.
+	if (args.have_vel_turns) {
+		if (!connect_motor(motor)) {
+			return 1;
+		}
+		std::cout << "Raw spin: " << args.vel_turns_s << " turns/s for "
+			<< args.seconds << "s (Ctrl+C to abort)\n";
+		const float pos_before = motor.read_position_turns();
+		const auto end = std::chrono::steady_clock::now()
+			+ std::chrono::milliseconds(static_cast<int>(args.seconds * 1000.0f));
+		float vel_sample = 0.0f;
+		uint32_t err = 0;
+		uint32_t state = 0;
+		while (std::chrono::steady_clock::now() < end) {
+			if (!motor.set_velocity_turns_s(args.vel_turns_s)) {
+				log_error("test", "Set_Input_Vel failed");
+				motor.stop();
+				return 1;
+			}
+			vel_sample = motor.status().velocity_turns_s;
+			motor.read_axis_state(err, state);
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		}
+		motor.stop();
+		const float delta = motor.read_position_turns() - pos_before;
+		std::cout << "Encoder delta: " << delta << " turns"
+			<< " (sample vel " << vel_sample
+			<< ", axis_state=" << state << ", err=0x" << std::hex << err
+			<< std::dec << ")\n";
+		if (std::fabs(delta) < 0.1f) {
+			log_error("test",
+				"Motor did not spin — ODrive velocity control/calibration issue "
+				"(not MotionPlanner). Try GUI closed-loop at input_vel=1");
+			return 1;
+		}
+		log_info("test", "Raw spin complete");
+		return 0;
+	}
+
+	if (cfg.motor.chain_mm_per_motor_turn <= 0.0f
+			&& cfg.motor.pulley_radius_m <= 0.0f) {
+		log_error("test",
+			"motor.chain_mm_per_motor_turn and motor.pulley_radius_m are both 0");
+		return 1;
+	}
 	if (!motor.has_valid_chain_scale()) {
 		log_error("test", "Invalid chain scale after config load");
 		return 1;
 	}
 	std::cout << "Effective scale: " << motor.mm_per_turn() << " mm/motor-turn\n";
-	if (!motor.connect()) {
-		log_error("test", "PreyMotor connect failed");
-		return 1;
+
+	int duration_ms = args.duration_ms;
+	if (args.have_speed) {
+		if (std::fabs(args.speed_mmps) < 1e-3f) {
+			log_error("test", "--speed-mmps must be non-zero");
+			return 1;
+		}
+		duration_ms = static_cast<int>(
+			std::lround(std::fabs(args.distance_mm) / std::fabs(args.speed_mmps) * 1000.0f));
+		if (duration_ms < 1) {
+			duration_ms = 1;
+		}
 	}
-	if (!motor.status().heartbeat_ok) {
-		log_error("test",
-			"No ODrive heartbeat — check ODrive power, can0 UP, and node_id "
-			"(candump can0 should show 7C1 heartbeats for node 62)");
-		return 1;
-	}
-	if (!motor.enter_velocity_mode()) {
-		log_error("test", "Failed to enter closed-loop velocity mode");
+
+	const float preview_turns_s = motor.chain_mps_to_turns_s(args.speed_mmps / 1000.0f);
+	std::cout << "Move " << args.distance_mm << " mm in " << duration_ms
+		<< " ms (≈" << preview_turns_s << " turns/s at cruise speed)\n";
+
+	if (!connect_motor(motor)) {
 		return 1;
 	}
 
 	const float pos_before = motor.read_position_turns();
 	MotionPlanner planner;
-	// Why: Ctrl+C should cancel the profile and zero velocity, not leave the axis spinning.
 	g_planner = &planner;
-	g_motor = &motor;
-	std::signal(SIGINT, on_stop_signal);
-	std::signal(SIGTERM, on_stop_signal);
-
 	std::cout << "Press Ctrl+C to abort the move.\n";
 	const bool ok = planner.move_distance_mm_in_time(
 		motor, args.distance_mm, duration_ms, args.accel_mps2);
 	g_planner = nullptr;
 	motor.stop();
 	g_motor = nullptr;
-	const float pos_after = motor.read_position_turns();
-	const float delta_turns = pos_after - pos_before;
-	const float delta_mm = motor.turns_to_chain_mm(delta_turns);
 
+	const float delta_turns = motor.read_position_turns() - pos_before;
+	const float delta_mm = motor.turns_to_chain_mm(delta_turns);
 	std::cout << "Encoder delta: " << delta_turns << " turns ("
 		<< delta_mm << " mm chain)\n";
 	if (!ok) {
 		log_error("test", "MotionPlanner move failed or cancelled");
+		return 1;
+	}
+	if (std::fabs(delta_turns) < 0.1f) {
+		log_error("test",
+			"Encoder barely moved — retry with: "
+			"./bin/test_odrive_move --config ... --vel-turns-s 1 --seconds 5");
 		return 1;
 	}
 	log_info("test", "Move complete");

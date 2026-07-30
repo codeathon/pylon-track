@@ -91,8 +91,9 @@ void PreyMotor::apply(const MotorCommand& cmd) {
 			return;
 		}
 		const float turns_s = chain_mps_to_turns_s(cmd.velocity_mps);
+		// No refresh_status here — MotionPlanner runs ~50 Hz and must keep
+		// Set_Input_Vel flowing faster than the ODrive watchdog.
 		can_.set_input_velocity(turns_s, 0.0f);
-		refresh_status();
 	}
 }
 
@@ -138,9 +139,8 @@ bool PreyMotor::set_velocity_turns_s(float turns_s) {
 	if (!status_.connected) {
 		return false;
 	}
-	const bool ok = can_.set_input_velocity(turns_s, 0.0f);
-	refresh_status();
-	return ok;
+	// Skip refresh on the command path so spin loops can feed the watchdog.
+	return can_.set_input_velocity(turns_s, 0.0f);
 }
 
 float PreyMotor::read_position_turns() const {

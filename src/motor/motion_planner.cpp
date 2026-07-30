@@ -68,8 +68,11 @@ bool MotionPlanner::move_distance_mm_in_time(PreyMotor& motor, float distance_mm
 	const auto start = std::chrono::steady_clock::now();
 	float elapsed_s = 0.0f;
 
+	const float peak_turns_s = motor.chain_mps_to_turns_s(peak_speed);
 	log_info("motor", "Move " + std::to_string(static_cast<int>(distance_mm))
-		+ " mm in " + std::to_string(duration_ms) + " ms");
+		+ " mm in " + std::to_string(duration_ms) + " ms (peak "
+		+ std::to_string(peak_speed) + " m/s ≈ "
+		+ std::to_string(peak_turns_s) + " turns/s)");
 
 	while (!cancel_.load()) {
 		elapsed_s = std::chrono::duration<float>(
