@@ -119,6 +119,13 @@ bool PreyMotor::enter_velocity_mode(int timeout_ms) {
 	return can_.enter_velocity_mode(timeout_ms);
 }
 
+bool PreyMotor::run_full_calibration(int timeout_ms) {
+	if (!status_.connected) {
+		return false;
+	}
+	return can_.run_full_calibration(timeout_ms);
+}
+
 bool PreyMotor::set_velocity_turns_s(float turns_s) {
 	if (!status_.connected) {
 		return false;

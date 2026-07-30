@@ -25,6 +25,8 @@ public:
 	MotorStatus status() const override;
 
 	bool enter_velocity_mode(int timeout_ms = 10000);
+	// Runs AXIS_STATE_FULL_CALIBRATION_SEQUENCE over CAN (motor will move).
+	bool run_full_calibration(int timeout_ms = 60000);
 
 	// Raw motor turns/s — used by ODriveCalibrator before chain constants are known.
 	bool set_velocity_turns_s(float turns_s);

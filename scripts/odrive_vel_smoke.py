@@ -21,6 +21,11 @@ def main() -> int:
 	p.add_argument("--node-id", type=int, default=62)
 	p.add_argument("--vel", type=float, default=1.0, help="turns/s")
 	p.add_argument("--seconds", type=float, default=2.0)
+	p.add_argument(
+		"--calibrate",
+		action="store_true",
+		help="Run FULL_CALIBRATION_SEQUENCE before the spin (motor will move)",
+	)
 	args = p.parse_args()
 
 	node = args.node_id
@@ -40,6 +45,28 @@ def main() -> int:
 	send(0x18, struct.pack("<B", 0))  # Clear_Errors
 	send(0x07, struct.pack("<I", 1))  # IDLE
 	time.sleep(0.2)
+
+	if args.calibrate:
+		print("Full calibration (state=3)... keep clear of the motor/chain")
+		send(0x07, struct.pack("<I", 3))
+		t_end = time.monotonic() + 60.0
+		saw_busy = False
+		while time.monotonic() < t_end:
+			msg = bus.recv(timeout=0.2)
+			if msg is None or msg.arbitration_id != ((node << 5) | 0x01):
+				continue
+			_err, state, result, _done = struct.unpack("<IBBB", bytes(msg.data[:7]))
+			if state != 1:
+				saw_busy = True
+			if saw_busy and state == 1:
+				print(f"Calibration done (procedure_result={result}, err={_err})")
+				if result != 0 or _err != 0:
+					return 1
+				break
+		else:
+			print("Calibration timed out")
+			return 1
+
 	send(0x0B, struct.pack("<II", 2, 1))  # VELOCITY + PASSTHROUGH
 	send(0x0F, struct.pack("<ff", 10.0, 40.0))  # vel/current limits
 	send(0x07, struct.pack("<I", 8))  # CLOSED_LOOP

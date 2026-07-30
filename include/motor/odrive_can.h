@@ -32,6 +32,10 @@ public:
 	bool set_axis_state(uint32_t requested_state);
 	bool set_controller_mode(uint32_t control_mode, uint32_t input_mode = 1);
 	bool get_axis_state(uint32_t& axis_error, uint32_t& axis_state) const;
+	bool get_heartbeat(uint32_t& axis_error, uint32_t& axis_state,
+		uint8_t& procedure_result) const;
+	// Motor + encoder calibration (axis will move). Blocks until IDLE or timeout.
+	bool run_full_calibration(int timeout_ms = 60000);
 	bool enter_velocity_mode(int timeout_ms = 10000);
 
 	uint8_t node_id() const { return cfg_.node_id; }

@@ -65,6 +65,20 @@ bool ODriveCalibrator::run(const std::string& config_path, ArenaExperimentConfig
 		sign = 1;
 	}
 
+	// Closed-loop with err=0 but no motion usually means motor/encoder were never
+	// calibrated (or marked pre_calibrated incorrectly). Offer CAN calibration first.
+	if (!opts_.skip_interactive) {
+		std::cout << "\nIf the motor has not been calibrated on this ODrive, run "
+			"full calibration now (shaft will twitch/spin).\n";
+		if (prompt_yes_no("Run ODrive full calibration over CAN? [y/n]: ")) {
+			prompt_enter("Clear the chain path, then press Enter to calibrate...");
+			if (!motor.run_full_calibration()) {
+				log_error("setup", "ODrive full calibration failed");
+				return false;
+			}
+		}
+	}
+
 	// Arm closed-loop only after the operator is ready — a prior Enter wait
 	// let the ODrive watchdog disarm before Set_Input_Vel started.
 	if (!opts_.skip_interactive) {

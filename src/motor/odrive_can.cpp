@@ -28,9 +28,12 @@ constexpr uint16_t CMD_SET_LIMITS = 0x00f;
 constexpr uint16_t CMD_CLEAR_ERRORS = 0x018;
 
 constexpr uint32_t AXIS_STATE_IDLE = 1;
+constexpr uint32_t AXIS_STATE_FULL_CALIBRATION_SEQUENCE = 3;
 constexpr uint32_t AXIS_STATE_CLOSED_LOOP_CONTROL = 8;
 constexpr uint32_t CONTROL_MODE_VELOCITY_CONTROL = 2;
 constexpr uint32_t INPUT_MODE_PASSTHROUGH = 1;
+// ODrive ProcedureResult.SUCCESS
+constexpr uint8_t kProcedureSuccess = 0;
 // Safe defaults so a GUI left at vel_limit=0 cannot silently clamp Set_Input_Vel.
 constexpr float kDefaultVelLimitTurnsS = 10.0f;
 constexpr float kDefaultCurrentLimitA = 40.0f;
@@ -198,15 +201,73 @@ bool ODriveCan::set_controller_mode(uint32_t control_mode, uint32_t input_mode) 
 	return send_frame(CMD_SET_CONTROLLER_MODE, buf, sizeof(buf));
 }
 
-bool ODriveCan::get_axis_state(uint32_t& axis_error, uint32_t& axis_state) const {
+bool ODriveCan::get_heartbeat(uint32_t& axis_error, uint32_t& axis_state,
+	uint8_t& procedure_result) const
+{
 	uint8_t buf[8] = {};
 	if (!recv_frame(CMD_HEARTBEAT, buf, sizeof(buf))) {
 		return false;
 	}
 	std::memcpy(&axis_error, buf, sizeof(uint32_t));
-	// Heartbeat packs Axis_State as uint8 at byte 4 (not a full uint32).
+	// Heartbeat: Axis_Error u32, Axis_State u8, Procedure_Result u8, ...
 	axis_state = buf[4];
+	procedure_result = buf[5];
 	return true;
+}
+
+bool ODriveCan::get_axis_state(uint32_t& axis_error, uint32_t& axis_state) const {
+	uint8_t procedure_result = 0;
+	return get_heartbeat(axis_error, axis_state, procedure_result);
+}
+
+bool ODriveCan::run_full_calibration(int timeout_ms) {
+	clear_errors();
+	if (!set_axis_state(AXIS_STATE_IDLE)) {
+		log_error("motor", "Set axis IDLE failed before calibration");
+		return false;
+	}
+	flush_rx();
+	wait_for_axis_state(AXIS_STATE_IDLE, 2000);
+
+	if (!set_axis_state(AXIS_STATE_FULL_CALIBRATION_SEQUENCE)) {
+		log_error("motor", "Set_Axis_State FULL_CALIBRATION failed");
+		return false;
+	}
+	log_info("motor", "ODrive full calibration started (motor will move)");
+
+	const auto deadline = std::chrono::steady_clock::now()
+		+ std::chrono::milliseconds(timeout_ms);
+	bool saw_busy_state = false;
+	while (std::chrono::steady_clock::now() < deadline) {
+		uint32_t err = 0;
+		uint32_t state = 0;
+		uint8_t result = 0;
+		if (!get_heartbeat(err, state, result)) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(50));
+			continue;
+		}
+		if (state != AXIS_STATE_IDLE) {
+			saw_busy_state = true;
+		}
+		// Done when back in IDLE after leaving it for the calibration sequence.
+		if (saw_busy_state && state == AXIS_STATE_IDLE) {
+			if (err != 0) {
+				log_error("motor", "Calibration finished with axis err=0x"
+					+ std::to_string(err));
+				return false;
+			}
+			if (result != kProcedureSuccess) {
+				log_error("motor", "Calibration procedure_result="
+					+ std::to_string(result) + " (want 0=SUCCESS)");
+				return false;
+			}
+			log_info("motor", "ODrive full calibration succeeded");
+			return true;
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	}
+	log_error("motor", "Timed out waiting for full calibration");
+	return false;
 }
 
 bool ODriveCan::wait_for_axis_state(uint32_t wanted, int timeout_ms) const {
