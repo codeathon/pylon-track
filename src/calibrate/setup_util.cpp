@@ -1,4 +1,5 @@
 #include "calibrate/setup_util.h"
+#include "calibrate/setup_options.h"
 
 #include <cstdio>
 #include <filesystem>
