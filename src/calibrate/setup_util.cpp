@@ -24,8 +24,14 @@ SetupStep parse_setup_step(const std::string& name) {
 }
 
 std::string resolve_arena_config_path(const char* argv0, const std::string& user_path) {
+	auto canonicalize = [](const fs::path& p) -> std::string {
+		std::error_code ec;
+		const fs::path abs = fs::weakly_canonical(fs::absolute(p), ec);
+		return ec ? p.string() : abs.string();
+	};
 	if (!user_path.empty()) {
-		return user_path;
+		// Always resolve --config to an absolute path so edits match the file loaded.
+		return canonicalize(user_path);
 	}
 	const fs::path exe_dir = fs::path(argv0 ? argv0 : "").parent_path();
 	const fs::path candidates[] = {
@@ -35,7 +41,7 @@ std::string resolve_arena_config_path(const char* argv0, const std::string& user
 	};
 	for (const auto& path : candidates) {
 		if (fs::exists(path)) {
-			return path.string();
+			return canonicalize(path);
 		}
 	}
 	return {};
