@@ -188,10 +188,12 @@ if(UNIX)
 	)
 
 	add_library(arena_motor STATIC ${MOTOR_SOURCES})
+	# chase_policy / motor_config pull arena_config → arena_mask (OpenCV types).
 	target_include_directories(arena_motor PUBLIC
 		${CMAKE_SOURCE_DIR}/include
+		${OpenCV_INCLUDE_DIRS}
 	)
-	target_link_libraries(arena_motor PUBLIC pthread)
+	target_link_libraries(arena_motor PUBLIC pthread ${OpenCV_LIBS})
 
 	if(ENABLE_LABJACK)
 		find_path(LJM_INCLUDE_DIR LabJackM.h
