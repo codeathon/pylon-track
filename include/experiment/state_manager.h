@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include "experiment/arena_config.h"
 #include "vision/tracking_frame.h"
 
 namespace Pylon {
