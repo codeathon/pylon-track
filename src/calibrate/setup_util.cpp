@@ -77,7 +77,7 @@ bool can_interface_up(const std::string& iface) {
 std::string can_interface_down_hint(const std::string& iface) {
 	return "CAN interface " + iface
 		+ " is not UP (check: ip addr show " + iface + "). "
-		+ "Rebuild with make (sudo installs can0), or: sudo systemctl start pylon-track-can0";
+		+ "Plug in USB-CAN adapter and re-run make (loads gs_usb + brings iface up).";
 }
 
 void print_setup_banner(const char* step_name, int step_num, int step_total) {

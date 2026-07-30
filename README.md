@@ -171,23 +171,28 @@ This builds `ferret_tracker`, `arena_experiment`, and the calibration tools
 
 ### CAN host bring-up (SocketCAN)
 
-USB-CAN adapters (e.g. ODrive USB-CAN) work out of the box on Linux; the host
-only needs `can0` brought up at **250000** after every reboot
+USB-CAN adapters (e.g. ODrive USB-CAN / candleLight) need a kernel driver, then
+`can0` brought up at **250000**
 ([ODrive host guide](https://docs.odriverobotics.com/v/latest/guides/can-guide.html#id4)).
 
-**`make` does this for you** (default `INSTALL_CAN0_HOST=ON`): it sudo-installs
-`can0-up.sh` + `pylon-track-can0.service`, enables the unit, and brings `can0` UP
-when the adapter is present. You may be prompted for your password once.
+**`make` bundles this** (default `INSTALL_CAN0_HOST=ON`): with sudo it
+
+1. Loads `gs_usb` / `peak_usb` and installs them in `/etc/modules-load.d/`
+2. Installs/enables `pylon-track-can0.service`
+3. Brings `can0` **UP** (fails the build if no USB-CAN adapter is present)
 
 ```bash
 cd build
 cmake -DPYLON_ROOT=/opt/pylon ..
-make
-ip addr show can0   # expect <...,UP,...>
+make                 # may prompt for sudo; requires USB-CAN plugged in
+ip addr show can0    # expect <...,UP,...>
 ```
 
-Skip with `-DINSTALL_CAN0_HOST=OFF`. After the first successful make, reboot/re-plug
-is handled by the systemd unit.
+Skip with `-DINSTALL_CAN0_HOST=OFF`.
+
+**Hardware note:** the ODrive’s USB *config* port is not SocketCAN. You need a
+USB-CAN adapter on the CAN bus. If make errors with “no can0”, plug that adapter
+in and re-run `make` — no separate `systemctl` / `modprobe` / `ip link` steps.
 
 Optional heartbeat smoke test (ODrive powered): `sudo apt install can-utils && candump can0 -xct z -n 10`.
 
@@ -643,7 +648,7 @@ metric interpretation.
 | `pylon SDK not found` | Set `-DPYLON_ROOT=` to your install prefix |
 | No camera found | USB cable, `install_udev`, camera powered |
 | No valid tracks after warmup | Lighting, gain, arena mask / ignore_regions, animal area priors in `arena_experiment.json` |
-| Motor connect failed / CAN not UP | `ip addr show can0` (need `UP` in flags); `sudo systemctl start pylon-track-can0`; rebuild with `make` |
+| Motor connect failed / CAN not UP | USB-CAN adapter plugged in? Re-run `make`; `ip addr show can0`; `lsusb` / `dmesg` |
 | Low frame rate | AOI size, `DeviceLinkThroughputLimitMode`, USB3 port |
 | High jitter | `make run_rt`, CPU isolation, reduce pipeline load |
 | Calibration tools missing after build | Ensure `BUILD_CALIBRATION_TESTS=ON` (default); run `make` not only `make ferret_tracker` |
