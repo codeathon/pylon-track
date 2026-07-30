@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <iomanip>
+#include <sstream>
 #include <poll.h>
 #include <thread>
 #include <unistd.h>
@@ -32,8 +34,33 @@ constexpr uint32_t AXIS_STATE_FULL_CALIBRATION_SEQUENCE = 3;
 constexpr uint32_t AXIS_STATE_CLOSED_LOOP_CONTROL = 8;
 constexpr uint32_t CONTROL_MODE_VELOCITY_CONTROL = 2;
 constexpr uint32_t INPUT_MODE_PASSTHROUGH = 1;
-// ODrive ProcedureResult.SUCCESS
+// ODrive ProcedureResult / Error (subset used in setup diagnostics).
 constexpr uint8_t kProcedureSuccess = 0;
+constexpr uint32_t kErrCalibration = 0x40000000u;
+
+const char* procedure_result_name(uint8_t result) {
+	switch (result) {
+	case 0: return "SUCCESS";
+	case 1: return "BUSY";
+	case 2: return "CANCELLED";
+	case 3: return "DISARMED";
+	case 4: return "NO_RESPONSE"; // encoder wiring/config
+	case 5: return "POLE_PAIR_CPR_MISMATCH";
+	case 6: return "PHASE_RESISTANCE_OUT_OF_RANGE"; // motor leads / calib voltage
+	case 7: return "PHASE_INDUCTANCE_OUT_OF_RANGE";
+	case 8: return "UNBALANCED_PHASES";
+	case 9: return "INVALID_MOTOR_TYPE";
+	case 10: return "ILLEGAL_HALL_STATE";
+	case 11: return "TIMEOUT";
+	default: return "UNKNOWN";
+	}
+}
+
+std::string hex_u32(uint32_t value) {
+	std::ostringstream oss;
+	oss << "0x" << std::hex << value;
+	return oss.str();
+}
 // Safe defaults so a GUI left at vel_limit=0 cannot silently clamp Set_Input_Vel.
 constexpr float kDefaultVelLimitTurnsS = 10.0f;
 constexpr float kDefaultCurrentLimitA = 40.0f;
@@ -251,14 +278,16 @@ bool ODriveCan::run_full_calibration(int timeout_ms) {
 		}
 		// Done when back in IDLE after leaving it for the calibration sequence.
 		if (saw_busy_state && state == AXIS_STATE_IDLE) {
-			if (err != 0) {
-				log_error("motor", "Calibration finished with axis err=0x"
-					+ std::to_string(err));
-				return false;
-			}
-			if (result != kProcedureSuccess) {
-				log_error("motor", "Calibration procedure_result="
-					+ std::to_string(result) + " (want 0=SUCCESS)");
+			if (err != 0 || result != kProcedureSuccess) {
+				std::string msg = "Calibration failed: err=" + hex_u32(err)
+					+ " procedure_result=" + std::to_string(result)
+					+ " (" + procedure_result_name(result) + ")";
+				if (err & kErrCalibration) {
+					msg += " [CALIBRATION_ERROR — check motor phase wiring, "
+						"calibration_current, resistance_calib_max_voltage; "
+						"use ODrive GUI/odrivetool for details]";
+				}
+				log_error("motor", msg);
 				return false;
 			}
 			log_info("motor", "ODrive full calibration succeeded");
