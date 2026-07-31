@@ -102,6 +102,8 @@ bool load_arena_experiment_config(const std::string& path, ArenaExperimentConfig
 				out.chase.flee_speed_gain);
 			out.chase.flee_accel_mps2 = json_or(c, "flee_accel_mps2",
 				out.chase.flee_accel_mps2);
+			out.chase.hunt_event_min_interval_ms = json_or(c,
+				"hunt_event_min_interval_ms", out.chase.hunt_event_min_interval_ms);
 		}
 		if (j.contains("motor")) {
 			const auto& m = j.at("motor");

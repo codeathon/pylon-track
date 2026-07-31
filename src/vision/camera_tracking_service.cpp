@@ -1,4 +1,5 @@
 #include "vision/camera_tracking_service.h"
+#include "experiment/op_timing.h"
 #include "log/logger.h"
 #include "vision/camera_frame.h"
 
@@ -53,7 +54,7 @@ void CameraTrackingService::OnImageGrabbed(Pylon::CInstantCamera&,
 {
 	const auto t0 = std::chrono::steady_clock::now();
 	const int64_t host_time_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-		std::chrono::steady_clock::now().time_since_epoch()).count();
+		std::chrono::system_clock::now().time_since_epoch()).count();
 
 	const CameraFrame input = make_camera_frame(result, frame_count_, host_time_ns);
 
@@ -79,6 +80,12 @@ void CameraTrackingService::OnImageGrabbed(Pylon::CInstantCamera&,
 
 	if (session_recorder_ && session_recorder_->is_open()) {
 		session_recorder_->log_frame(out.frame);
+		record_op_duration(session_recorder_, "tracking_pipeline", host_time_ns,
+			out.pipeline_duration_us, "");
+		const int64_t grab_us = std::chrono::duration_cast<std::chrono::microseconds>(
+			std::chrono::steady_clock::now() - t0).count();
+		record_op_duration(session_recorder_, "grab_to_frame", host_time_ns,
+			grab_us, "");
 	}
 
 	if (opts_.enable_display && !out.display_frame.empty()) {

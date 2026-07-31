@@ -104,7 +104,10 @@ void PreyMotor::apply(const MotorCommand& cmd) {
 		const float turns_s = chain_mps_to_turns_s(cmd.velocity_mps);
 		// No refresh_status here — MotionPlanner runs ~50 Hz and must keep
 		// Set_Input_Vel flowing faster than the ODrive watchdog.
-		can_.set_input_velocity(turns_s, 0.0f);
+		if (!can_.set_input_velocity(turns_s, 0.0f)) {
+			log_error("motor", "Set_Input_Vel failed ("
+				+ std::to_string(turns_s) + " turns/s)");
+		}
 	}
 }
 
@@ -131,6 +134,52 @@ MotorStatus PreyMotor::status() const {
 	return status_;
 }
 
+bool PreyMotor::is_connected() const {
+	// No CAN — tick() calls this every ~20 ms and must stay non-blocking.
+	std::lock_guard<std::mutex> lock(status_mutex_);
+	return status_.connected;
+}
+
+bool PreyMotor::try_sample_encoder(float& pos_turns, float& vel_turns_s,
+	int timeout_ms)
+{
+	if (!is_connected()) {
+		return false;
+	}
+	float pos = 0.0f;
+	float vel = 0.0f;
+	if (!can_.get_encoder_estimates(pos, vel, timeout_ms)) {
+		return false;
+	}
+	std::lock_guard<std::mutex> lock(status_mutex_);
+	status_.position_turns = pos;
+	status_.velocity_turns_s = vel;
+	status_.chain_position_mm = turns_to_chain_mm(pos);
+	status_.chain_velocity_mps = turns_s_to_chain_mps(vel);
+	pos_turns = pos;
+	vel_turns_s = vel;
+	return true;
+}
+
+bool PreyMotor::try_sample_velocity_turns_s(float& vel_turns_s, int timeout_ms) const {
+	// const path for calibrator/hunt_sim — same CAN read, updates cached status.
+	if (!is_connected()) {
+		return false;
+	}
+	float pos = 0.0f;
+	float vel = 0.0f;
+	if (!can_.get_encoder_estimates(pos, vel, timeout_ms)) {
+		return false;
+	}
+	std::lock_guard<std::mutex> lock(status_mutex_);
+	status_.position_turns = pos;
+	status_.velocity_turns_s = vel;
+	status_.chain_position_mm = turns_to_chain_mm(pos);
+	status_.chain_velocity_mps = turns_s_to_chain_mps(vel);
+	vel_turns_s = vel;
+	return true;
+}
+
 bool PreyMotor::enter_velocity_mode(int timeout_ms) {
 	if (!status_.connected) {
 		return false;
@@ -155,6 +204,19 @@ bool PreyMotor::set_velocity_turns_s(float turns_s) {
 	return can_.set_input_velocity(turns_s, 0.0f);
 }
 
+bool PreyMotor::command_turns_s(float turns_s) {
+	// Same entry point as --vel-turns-s (MotionPlanner blocking execute).
+	return set_velocity_turns_s(turns_s);
+}
+
+bool PreyMotor::prepare_velocity_move() {
+	return assert_velocity_control();
+}
+
+bool PreyMotor::try_sample_velocity_turns_s(float& vel_turns_s) {
+	return try_sample_velocity_turns_s(vel_turns_s, /*timeout_ms=*/0);
+}
+
 float PreyMotor::read_position_turns() const {
 	refresh_status();
 	std::lock_guard<std::mutex> lock(status_mutex_);
@@ -166,4 +228,29 @@ bool PreyMotor::read_axis_state(uint32_t& axis_error, uint32_t& axis_state) cons
 		return false;
 	}
 	return can_.get_axis_state(axis_error, axis_state);
+}
+
+bool PreyMotor::assert_velocity_control() {
+	if (!status_.connected) {
+		return false;
+	}
+	// Why: lab saw state=8/err=0 with sample_vel≈0 — re-assert mode+limits
+	// without cycling IDLE (GUI can leave vel_limit=0 or wrong control_mode).
+	return can_.refresh_velocity_limits();
+}
+
+bool PreyMotor::try_get_iq(float& iq_setpoint, float& iq_measured, int timeout_ms) const {
+	if (!is_connected()) {
+		return false;
+	}
+	return can_.get_iq(iq_setpoint, iq_measured, timeout_ms);
+}
+
+bool PreyMotor::try_get_active_errors(uint32_t& active_errors, uint32_t& disarm_reason,
+	int timeout_ms) const
+{
+	if (!is_connected()) {
+		return false;
+	}
+	return can_.get_active_errors(active_errors, disarm_reason, timeout_ms);
 }

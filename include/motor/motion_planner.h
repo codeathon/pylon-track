@@ -32,6 +32,15 @@ public:
 		int chain_direction_sign, float distance_mm, int duration_ms,
 		float max_accel_mps2 = 5.0f, float odrive_vel_limit_turns_s = 10.0f);
 
+	// Runtime profile actually sent to the motor (min-viable floor + spin-up
+	// lead-in + cruise for the requested distance). Hunt-sim / chase execute
+	// this, not the pure feasibility checklist from plan_distance_mm_in_time.
+	static ChainMovePlan runtime_plan_distance_mm_in_time(const PreyMotor& motor,
+		float distance_mm, int duration_ms, float max_accel_mps2 = 5.0f);
+	static ChainMovePlan runtime_plan_distance_mm_in_time(float mm_per_turn,
+		int chain_direction_sign, float distance_mm, int duration_ms,
+		float max_accel_mps2 = 5.0f);
+
 	// Plan + blocking execute. If require_feasible, refuses when not feasible.
 	bool move_distance_mm_in_time(PreyMotor& motor, float distance_mm,
 		int duration_ms, float max_accel_mps2 = 5.0f,
@@ -44,7 +53,8 @@ public:
 	MoveTick tick(IMotor& motor);
 	bool is_move_active() const { return active_.load(); }
 
-	// Blocking execute (test_odrive_move) — loops start_plan + tick.
+	// Blocking execute (test_odrive_move) — direct apply loop at ~50 Hz.
+	// Chase uses start_plan + tick instead (non-blocking).
 	bool execute_plan(IMotor& motor, const ChainMovePlan& plan);
 
 	// Cooperative cancel: next tick() → Cancelled + motor.stop().
@@ -54,6 +64,11 @@ public:
 
 private:
 	float sample_speed_mps(float elapsed_s) const;
+	// Capture encoder start; enables closed-loop stop when true.
+	bool arm_closed_loop_start(IMotor& motor, int timeout_ms);
+	// True when traveled (+ coast lead) reaches |plan_.distance_mm|.
+	bool closed_loop_distance_reached(IMotor& motor, float& traveled_mm,
+		float& sample_vel_turns_s) const;
 
 	std::atomic<bool> busy_{false};   // blocking execute_plan in progress
 	std::atomic<bool> active_{false}; // non-blocking start_plan in progress
@@ -61,4 +76,8 @@ private:
 
 	ChainMovePlan plan_{};
 	std::chrono::steady_clock::time_point start_time_{};
+	bool need_prepare_{false}; // first tick after start_plan re-asserts mode/limits
+	bool closed_loop_{false};  // encoder start captured — stop on distance
+	float start_pos_turns_{0.0f};
+	float last_traveled_mm_{0.0f};
 };

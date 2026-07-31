@@ -1,6 +1,7 @@
 #include "vision/tracking_pipeline.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include "log/logger.h"
 #include "tracker/tracker.h"
@@ -77,6 +78,7 @@ void TrackingPipeline::coast_track(cv::KalmanFilter& kf, const TrackState& prior
 TrackingProcessOutput TrackingPipeline::process(const CameraFrame& input,
 	TrialPhase trial_phase)
 {
+	const auto t0 = std::chrono::steady_clock::now();
 	TrackingProcessOutput out;
 	out.frame.frame_index = input.frame_index;
 	out.frame.camera_ts_ticks = input.camera_ts_ticks;
@@ -85,6 +87,8 @@ TrackingProcessOutput TrackingPipeline::process(const CameraFrame& input,
 	out.frame.warmup = frame_count_ < static_cast<uint64_t>(warmup_frames_);
 
 	if (!input.grab_ok || input.mono8.empty()) {
+		out.pipeline_duration_us = std::chrono::duration_cast<std::chrono::microseconds>(
+			std::chrono::steady_clock::now() - t0).count();
 		return out;
 	}
 
@@ -156,5 +160,7 @@ TrackingProcessOutput TrackingPipeline::process(const CameraFrame& input,
 
 	fill_tracking_derived(out.frame, fps_);
 	++frame_count_;
+	out.pipeline_duration_us = std::chrono::duration_cast<std::chrono::microseconds>(
+		std::chrono::steady_clock::now() - t0).count();
 	return out;
 }

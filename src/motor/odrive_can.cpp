@@ -22,11 +22,13 @@ namespace {
 // ODrive CANSimple command IDs (see ODrive CAN protocol docs).
 constexpr uint16_t CMD_HEARTBEAT = 0x001;
 constexpr uint16_t CMD_ESTOP = 0x002;
+constexpr uint16_t CMD_GET_ERROR = 0x003;
 constexpr uint16_t CMD_GET_ENCODER_ESTIMATES = 0x009;
 constexpr uint16_t CMD_SET_AXIS_STATE = 0x007;
 constexpr uint16_t CMD_SET_CONTROLLER_MODE = 0x00b;
 constexpr uint16_t CMD_SET_INPUT_VEL = 0x00d;
 constexpr uint16_t CMD_SET_LIMITS = 0x00f;
+constexpr uint16_t CMD_GET_IQ = 0x014;
 constexpr uint16_t CMD_CLEAR_ERRORS = 0x018;
 
 constexpr uint32_t AXIS_STATE_IDLE = 1;
@@ -194,21 +196,33 @@ bool ODriveCan::wake_autobaud(int timeout_ms) {
 	return check_heartbeat();
 }
 
-bool ODriveCan::recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len_out) const {
+bool ODriveCan::recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len_out,
+	int timeout_ms) const
+{
 	if (socket_fd_ < 0) {
 		return false;
 	}
+	const int wait_ms = (timeout_ms < 0) ? cfg_.rx_timeout_ms : timeout_ms;
 	pollfd pfd{};
 	pfd.fd = socket_fd_;
 	pfd.events = POLLIN;
 	const auto deadline = std::chrono::steady_clock::now()
-		+ std::chrono::milliseconds(cfg_.rx_timeout_ms);
+		+ std::chrono::milliseconds(wait_ms);
 
 	// Bus is busy with cyclic encoder/heartbeat — skip non-matching frames until timeout.
-	while (std::chrono::steady_clock::now() < deadline) {
-		const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
-			deadline - std::chrono::steady_clock::now()).count();
-		if (poll(&pfd, 1, static_cast<int>(std::max<int64_t>(left, 0))) <= 0) {
+	// timeout_ms == 0: drain already-queued frames only (no wait) so telemetry cannot
+	// stall the Set_Input_Vel cadence used by MotionPlanner.
+	while (true) {
+		int poll_ms = 0;
+		if (wait_ms != 0) {
+			const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+				deadline - std::chrono::steady_clock::now()).count();
+			if (left < 0) {
+				return false;
+			}
+			poll_ms = static_cast<int>(left);
+		}
+		if (poll(&pfd, 1, poll_ms) <= 0) {
 			return false;
 		}
 
@@ -229,18 +243,30 @@ bool ODriveCan::recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len
 		}
 		return true;
 	}
-	return false;
 }
 
-bool ODriveCan::get_encoder_estimates(float& pos_turns, float& vel_turns_s) const {
+bool ODriveCan::get_encoder_estimates(float& pos_turns, float& vel_turns_s,
+	int timeout_ms) const
+{
 	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
-	// Cyclic by default (~10 ms); listen rather than request.
+	// Cyclic by default (~10 ms). Drain to the *newest* frame — returning the
+	// oldest queued estimate after a long Set_Input_Vel loop (no mid-move
+	// status reads) made --via-planner report ~0 encoder delta while the
+	// chain had actually moved (direct spin drained RX every tick and looked OK).
 	uint8_t buf[8] = {};
-	if (!recv_frame(CMD_GET_ENCODER_ESTIMATES, buf, sizeof(buf))) {
+	float pos = 0.0f;
+	float vel = 0.0f;
+	if (!recv_frame(CMD_GET_ENCODER_ESTIMATES, buf, sizeof(buf), timeout_ms)) {
 		return false;
 	}
-	unpack_float_le(buf, pos_turns);
-	unpack_float_le(buf + 4, vel_turns_s);
+	unpack_float_le(buf, pos);
+	unpack_float_le(buf + 4, vel);
+	while (recv_frame(CMD_GET_ENCODER_ESTIMATES, buf, sizeof(buf), /*timeout_ms=*/0)) {
+		unpack_float_le(buf, pos);
+		unpack_float_le(buf + 4, vel);
+	}
+	pos_turns = pos;
+	vel_turns_s = vel;
 	return true;
 }
 
@@ -281,10 +307,34 @@ bool ODriveCan::check_heartbeat() const {
 
 bool ODriveCan::set_axis_state(uint32_t requested_state) {
 	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
-	uint8_t buf[8] = {};
+	// Official CANSimple examples use DLC=4 for Axis_Requested_State.
+	uint8_t buf[4] = {};
 	std::memcpy(buf, &requested_state, sizeof(uint32_t));
-	// Pad to 8 bytes — Host→ODrive reserved fields must be zero.
 	return send_frame(CMD_SET_AXIS_STATE, buf, sizeof(buf));
+}
+
+bool ODriveCan::get_iq(float& iq_setpoint, float& iq_measured, int timeout_ms) const {
+	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
+	uint8_t buf[8] = {};
+	if (!recv_frame(CMD_GET_IQ, buf, sizeof(buf), timeout_ms)) {
+		return false;
+	}
+	unpack_float_le(buf, iq_setpoint);
+	unpack_float_le(buf + 4, iq_measured);
+	return true;
+}
+
+bool ODriveCan::get_active_errors(uint32_t& active_errors, uint32_t& disarm_reason,
+	int timeout_ms) const
+{
+	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
+	uint8_t buf[8] = {};
+	if (!recv_frame(CMD_GET_ERROR, buf, sizeof(buf), timeout_ms)) {
+		return false;
+	}
+	std::memcpy(&active_errors, buf, sizeof(uint32_t));
+	std::memcpy(&disarm_reason, buf + 4, sizeof(uint32_t));
+	return true;
 }
 
 bool ODriveCan::set_controller_mode(uint32_t control_mode, uint32_t input_mode) {
@@ -399,6 +449,14 @@ void ODriveCan::flush_rx() const {
 			break;
 		}
 	}
+}
+
+bool ODriveCan::refresh_velocity_limits() {
+	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
+	if (!set_controller_mode(CONTROL_MODE_VELOCITY_CONTROL, INPUT_MODE_PASSTHROUGH)) {
+		return false;
+	}
+	return set_limits(kDefaultVelLimitTurnsS, kDefaultCurrentLimitA);
 }
 
 bool ODriveCan::enter_velocity_mode(int timeout_ms) {

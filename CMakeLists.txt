@@ -32,6 +32,7 @@ set(ARENA_PIPELINE_SOURCES
 	src/experiment/trial_state.cpp
 	src/experiment/arena_config.cpp
 	src/experiment/session_recorder.cpp
+	src/experiment/op_timing.cpp
 	src/vision/camera_frame.cpp
 	src/vision/tracking_frame.cpp
 	src/vision/arena_mask.cpp
@@ -58,6 +59,7 @@ set(MOTOR_SOURCES
 	src/motor/shuttle_motor.cpp
 	src/motor/chase_policy.cpp
 	src/motor/chase_controller.cpp
+	src/motor/hunt_event.cpp
 )
 
 set(CALIBRATE_SOURCES
@@ -317,6 +319,15 @@ if(UNIX)
 	)
 	target_link_libraries(test_motion_planner pthread)
 
+	# Offline hunt-event edge / re-arm unit tests (no camera/CAN).
+	add_executable(test_hunt_event
+		tests/hunt_event_test.cpp
+		src/motor/hunt_event.cpp
+	)
+	target_include_directories(test_hunt_event PRIVATE
+		${CMAKE_SOURCE_DIR}/include
+	)
+
 	# RPATH: embed pylon lib path so the binary runs without LD_LIBRARY_PATH
 	set_target_properties(ferret_tracker PROPERTIES
 		INSTALL_RPATH "${PYLON_ROOT}/lib"
@@ -385,6 +396,8 @@ if(UNIX)
 		"  make arena_experiment — build experiment + bring can0 UP\n"
 		"  make test_odrive_move — chain distance/speed move via MotionPlanner\n"
 		"  make test_motion_planner — offline MotionPlanner unit tests (no CAN)\n"
+		"  make test_hunt_event — offline hunt-event edge/re-arm unit tests\n"
+		"  make test_hunt_sim   — ~2 min varied-speed hunt chain simulation (CAN)\n"
 		"  make ferret_tracker   — build → bin/ferret_tracker\n"
 		"  make run_rt           — run with SCHED_FIFO priority (low jitter)\n"
 		"  make install_udev     — install udev rules for USB camera access\n"

@@ -49,12 +49,22 @@ void SessionRecorder::open_session(const std::string& base_dir,
 
 	telemetry_.open((dir / "telemetry.csv").string());
 	events_.open((dir / "events.csv").string());
-	if (!telemetry_.is_open() || !events_.is_open()) {
+	ops_timing_.open((dir / "ops_timing.csv").string());
+	chase_events_.open((dir / "chase_events.csv").string());
+	if (!telemetry_.is_open() || !events_.is_open()
+		|| !ops_timing_.is_open() || !chase_events_.is_open()) {
 		throw std::runtime_error("Cannot open session CSV files in " + session_dir_);
 	}
 	write_telemetry_header();
 	write_events_header();
+	write_ops_timing_header();
+	write_chase_events_header();
 	log_info("experiment", "Session recording: " + session_dir_);
+}
+
+bool SessionRecorder::is_open() const {
+	std::lock_guard<std::mutex> lock(mutex_);
+	return telemetry_.is_open();
 }
 
 void SessionRecorder::write_telemetry_header() {
@@ -71,6 +81,17 @@ void SessionRecorder::write_events_header() {
 	write_csv_row(events_, {"host_time_ns", "event", "trial_phase"});
 }
 
+void SessionRecorder::write_ops_timing_header() {
+	write_csv_row(ops_timing_, {"host_time_ns", "op", "duration_us", "detail"});
+}
+
+void SessionRecorder::write_chase_events_header() {
+	write_csv_row(chase_events_, {
+		"host_time_ns", "event", "distance_mm", "closing_mm_s", "threat",
+		"flee_mm", "duration_ms", "peak_turns_s", "reason"
+	});
+}
+
 std::string SessionRecorder::csv_num(double value, int precision) {
 	std::ostringstream oss;
 	oss.setf(std::ios::fixed);
@@ -79,7 +100,29 @@ std::string SessionRecorder::csv_num(double value, int precision) {
 	return oss.str();
 }
 
+std::string SessionRecorder::csv_escape(const char* text) {
+	if (!text) {
+		return "";
+	}
+	std::string s(text);
+	// Quote if commas/quotes present so ops detail stays one CSV cell.
+	if (s.find_first_of(",\"\n") == std::string::npos) {
+		return s;
+	}
+	std::string out = "\"";
+	for (char c : s) {
+		if (c == '"') {
+			out += "\"\"";
+		} else {
+			out += c;
+		}
+	}
+	out += '"';
+	return out;
+}
+
 void SessionRecorder::log_frame(const TrackingFrame& frame) {
+	std::lock_guard<std::mutex> lock(mutex_);
 	if (!telemetry_.is_open()) {
 		return;
 	}
@@ -103,6 +146,7 @@ void SessionRecorder::log_frame(const TrackingFrame& frame) {
 }
 
 void SessionRecorder::log_event(const char* name, int64_t host_time_ns, TrialPhase phase) {
+	std::lock_guard<std::mutex> lock(mutex_);
 	if (!events_.is_open()) {
 		return;
 	}
@@ -110,5 +154,41 @@ void SessionRecorder::log_event(const char* name, int64_t host_time_ns, TrialPha
 		std::to_string(host_time_ns),
 		name,
 		trial_phase_name(phase)
+	});
+}
+
+void SessionRecorder::log_op_timing(int64_t host_time_ns, const char* op,
+	int64_t duration_us, const char* detail)
+{
+	std::lock_guard<std::mutex> lock(mutex_);
+	if (!ops_timing_.is_open()) {
+		return;
+	}
+	write_csv_row(ops_timing_, {
+		std::to_string(host_time_ns),
+		op ? op : "",
+		std::to_string(duration_us),
+		csv_escape(detail)
+	});
+}
+
+void SessionRecorder::log_chase_event(int64_t host_time_ns, const char* event,
+	float distance_mm, float closing_mm_s, float threat, float flee_mm,
+	int duration_ms, float peak_turns_s, const char* reason)
+{
+	std::lock_guard<std::mutex> lock(mutex_);
+	if (!chase_events_.is_open()) {
+		return;
+	}
+	write_csv_row(chase_events_, {
+		std::to_string(host_time_ns),
+		event ? event : "",
+		csv_num(distance_mm, 1),
+		csv_num(closing_mm_s, 1),
+		csv_num(threat, 3),
+		csv_num(flee_mm, 1),
+		std::to_string(duration_ms),
+		csv_num(peak_turns_s, 3),
+		csv_escape(reason)
 	});
 }

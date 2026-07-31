@@ -3,6 +3,7 @@
 #include <cstdint>
 #include "experiment/arena_config.h"
 #include "motor/chain_move_plan.h"
+#include "motor/hunt_event.h"
 #include "motor/motor_types.h"
 #include "vision/tracking_frame.h"
 
@@ -13,7 +14,7 @@ struct ChaseDecision {
 	int flee_direction_sign = 1;
 	float threat = 0.0f;
 	bool enable_motion = false;
-	// When true, controller should start planned_flee (if planner idle).
+	// When true, controller may arm planned_flee on a hunt_event (planner idle).
 	bool use_planned_flee = false;
 	ChainMovePlan planned_flee;
 	const char* reason = "idle";

@@ -13,6 +13,8 @@ set(CALIB_PROD_SOURCES
 	${CMAKE_SOURCE_DIR}/src/log/logger.cpp
 	${CMAKE_SOURCE_DIR}/src/experiment/trial_state.cpp
 	${CMAKE_SOURCE_DIR}/src/experiment/session_recorder.cpp
+	# Why: CameraTrackingService logs grab/pipeline latency via record_op_duration.
+	${CMAKE_SOURCE_DIR}/src/experiment/op_timing.cpp
 	${CMAKE_SOURCE_DIR}/src/vision/camera_frame.cpp
 	${CMAKE_SOURCE_DIR}/src/vision/tracking_frame.cpp
 	${CMAKE_SOURCE_DIR}/src/vision/arena_mask.cpp
@@ -93,6 +95,26 @@ target_include_directories(test_distance_moving PRIVATE
 	${OpenCV_INCLUDE_DIRS}
 )
 target_link_libraries(test_distance_moving PRIVATE
+	${OpenCV_LIBS}
+	nlohmann_json::nlohmann_json
+	pthread
+)
+
+# ~2 minute scripted hunt: varied distance/duration/accel/direction moves.
+add_executable(test_hunt_sim
+	hunt_sim_suite.cpp
+	${CMAKE_SOURCE_DIR}/src/motor/odrive_can.cpp
+	${CMAKE_SOURCE_DIR}/src/motor/prey_motor.cpp
+	${CMAKE_SOURCE_DIR}/src/motor/motion_planner.cpp
+	${CMAKE_SOURCE_DIR}/src/experiment/arena_config.cpp
+	${CMAKE_SOURCE_DIR}/src/calibrate/setup_util.cpp
+	${CMAKE_SOURCE_DIR}/src/log/logger.cpp
+)
+target_include_directories(test_hunt_sim PRIVATE
+	${CMAKE_SOURCE_DIR}/include
+	${OpenCV_INCLUDE_DIRS}
+)
+target_link_libraries(test_hunt_sim PRIVATE
 	${OpenCV_LIBS}
 	nlohmann_json::nlohmann_json
 	pthread

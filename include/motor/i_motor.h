@@ -12,4 +12,20 @@ public:
 	virtual void stop() = 0;
 	virtual void estop() = 0;
 	virtual MotorStatus status() const = 0;
+	// Why: MotionPlanner::tick must not call status() — on PreyMotor that blocks
+	// on CAN encoder RX (up to ~200 ms) and short distance moves expire before
+	// any Set_Input_Vel is sent. Cached connect flag only; no bus I/O.
+	virtual bool is_connected() const { return status().connected; }
+	// Direct Set_Input_Vel (motor turns/s). Default unsupported — callers fall
+	// back to apply(velocity_mps). PreyMotor overrides to the same path as
+	// test_odrive_move --vel-turns-s (known-good on the lab rig).
+	virtual bool command_turns_s(float /*turns_s*/) { return false; }
+	// Re-assert velocity mode + limits before a blocking move (no-op default).
+	virtual bool prepare_velocity_move() { return true; }
+	// Non-blocking velocity peek — also drains cyclic encoder RX (FakeMotor: no).
+	virtual bool try_sample_velocity_turns_s(float& /*vel_turns_s*/) { return false; }
+	// Encoder sample for closed-loop distance stop. timeout_ms=0 → non-blocking.
+	// Default unsupported → MotionPlanner falls back to open-loop timed cruise.
+	virtual bool try_sample_encoder(float& /*pos_turns*/, float& /*vel_turns_s*/,
+		int /*timeout_ms*/ = 0) { return false; }
 };

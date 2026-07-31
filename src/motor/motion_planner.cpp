@@ -14,27 +14,41 @@ namespace {
 // mm/s, since this is a property of the motor itself, independent of
 // whatever sprocket/chain ratio it happens to be driving.
 constexpr float kMinViableTurnsPerS = 1.5f;
-// Ramp rate used only to reach kMinViableTurnsPerS in the floor case below —
-// separate from (and always faster than) the caller's max_accel_mps2, which
-// that case overrides. Must be fast: crawling up to the floor at a gentle
-// rate spends most of the ramp sitting in the exact low-speed range that
-// doesn't produce torque, so it can stall out before ever reaching a speed
-// that actually turns the chain. 50 m/s^2 matches the --max-accel value
-// that was confirmed on the rig to move the chain.
+// Documented step intent (no linear ramp through the dead zone).
 constexpr float kFloorRampAccelMps2 = 50.0f;
+// Lab: sample_vel reaches ~command ~1.2 s after a step Set_Input_Vel at
+// 1.5–1.8 turns/s. Shorter windows stop during spool-up (~0 mm travel).
+constexpr float kSpinupLeadInS = 1.2f;
+// Coast time after Set_Input_Vel(0). Lab: stop at traveled=231 with lead≈75 mm
+// only coasted to 254 mm (≈23 mm) — 0.12 s lead was far too aggressive.
+constexpr float kCoastLeadS = 0.04f;
+constexpr float kCoastLeadMinMm = 10.0f;
+constexpr float kCoastLeadMaxMm = 40.0f;
+// Extra timeout beyond plan window so slow spool-up can still hit distance.
+constexpr float kClosedLoopTimeoutSlackS = 2.0f;
+} // namespace
 
-// Build an executable profile with min-viable floor + real (fast) accel ramp.
-// Why: plan_chain_move is a feasibility checklist; runtime also lifts peaks
-// that would sit in the dead zone and ramps quickly so torque actually appears.
-ChainMovePlan build_runtime_plan(const PreyMotor& motor, float distance_mm,
+ChainMovePlan MotionPlanner::runtime_plan_distance_mm_in_time(
+	const PreyMotor& motor, float distance_mm, int duration_ms,
+	float max_accel_mps2)
+{
+	return runtime_plan_distance_mm_in_time(motor.mm_per_turn(),
+		motor.config().chain_direction_sign, distance_mm, duration_ms,
+		max_accel_mps2);
+}
+
+// Build an executable profile: min-viable floor + spin-up lead-in + cruise
+// sized for the *requested* distance (not peak × full caller window).
+ChainMovePlan MotionPlanner::runtime_plan_distance_mm_in_time(
+	float mm_per_turn, int chain_direction_sign, float distance_mm,
 	int duration_ms, float max_accel_mps2)
 {
 	ChainMovePlan p;
 	p.distance_mm = distance_mm;
 	p.duration_ms = duration_ms;
-	p.mm_per_turn = motor.mm_per_turn();
-	p.chain_direction_sign = (motor.config().chain_direction_sign < 0) ? -1 : 1;
-	p.scale_ok = motor.has_valid_chain_scale();
+	p.mm_per_turn = mm_per_turn;
+	p.chain_direction_sign = (chain_direction_sign < 0) ? -1 : 1;
+	p.scale_ok = mm_per_turn > 1e-3f;
 	p.timing_ok = duration_ms > 0 && std::fabs(distance_mm) >= 1e-3f;
 	if (!p.scale_ok || !p.timing_ok) {
 		p.feasible = false;
@@ -46,7 +60,6 @@ ChainMovePlan build_runtime_plan(const PreyMotor& motor, float distance_mm,
 	const float duration_s = static_cast<float>(duration_ms) / 1000.0f;
 	const float accel = (max_accel_mps2 > 0.0f) ? max_accel_mps2 : 0.5f;
 	p.accel_mps2 = accel;
-	p.duration_s = duration_s;
 	p.avg_speed_mps = distance_m / duration_s;
 
 	// Triangle peak covering |x| in T; cap by accel so accel+decel fit the window.
@@ -61,7 +74,6 @@ ChainMovePlan build_runtime_plan(const PreyMotor& motor, float distance_mm,
 		peak_abs = peak_accel_cap;
 	}
 
-	float ramp_accel = accel;
 	const float min_viable_mps = kMinViableTurnsPerS * p.mm_per_turn / 1000.0f;
 	if (peak_abs > 1e-6f && peak_abs < min_viable_mps) {
 		log_info("motor", "Target peak " + std::to_string(peak_abs)
@@ -71,35 +83,38 @@ ChainMovePlan build_runtime_plan(const PreyMotor& motor, float distance_mm,
 			"the floor speed instead of commanding a speed the motor can't "
 			"sustain");
 		peak_abs = min_viable_mps;
-		ramp_accel = kFloorRampAccelMps2;
-		p.accel_mps2 = ramp_accel;
 	}
 
-	// Ramp at real accel (fast), cruise for remaining distance, clamp to time left.
-	const float accel_time = (peak_abs > 1e-6f) ? (peak_abs / ramp_accel) : 0.0f;
-	const float time_left = std::max(0.0f, duration_s - 2.0f * accel_time);
-	const float distance_cruise_time = (peak_abs > 1e-6f)
-		? std::max(0.0f, std::fabs(distance_m) / peak_abs - accel_time)
-		: 0.0f;
-	const float cruise_time = std::min(time_left, distance_cruise_time);
+	// Cruise for requested distance at peak; prepend spin-up so the motor is
+	// actually moving before we count the distance window. Old full-window
+	// hold planned peak×T (e.g. 1981 mm for a 300 mm request).
+	const float accel_time = 0.0f;
+	const float dist_cruise_s = (peak_abs > 1e-6f)
+		? (std::fabs(distance_m) / peak_abs) : 0.0f;
+	const float cruise_time = kSpinupLeadInS + dist_cruise_s;
+	const float window_s = std::max(duration_s, cruise_time);
+	p.accel_mps2 = kFloorRampAccelMps2;
 
 	p.peak_speed_mps = std::copysign(peak_abs, distance_m);
 	p.accel_time_s = accel_time;
 	p.cruise_time_s = cruise_time;
-	// Tick Done when the profile ends (may finish early after floor lift).
-	p.duration_s = 2.0f * accel_time + cruise_time;
-	p.duration_ms = static_cast<int>(std::lround(p.duration_s * 1000.0f));
-	p.expected_distance_mm = std::copysign(
-		1000.0f * peak_abs * (accel_time + cruise_time), distance_mm);
+	p.duration_s = window_s;
+	p.duration_ms = static_cast<int>(std::lround(window_s * 1000.0f));
+	// Honest aim: the request (open-loop; spin-up shape makes this approximate).
+	p.expected_distance_mm = distance_mm;
 	p.peak_turns_s = (p.peak_speed_mps * 1000.0f / p.mm_per_turn)
 		* static_cast<float>(p.chain_direction_sign);
 	p.vel_limit_ok = std::fabs(p.peak_turns_s) <= p.odrive_vel_limit_turns_s + 1e-3f;
-	p.feasible = p.scale_ok && p.timing_ok && p.vel_limit_ok;
-	p.summary = "runtime plan peak=" + std::to_string(p.peak_turns_s) + " turns/s\n";
+	p.feasible = p.scale_ok && p.timing_ok && p.vel_limit_ok
+		&& std::fabs(p.peak_turns_s) + 1e-3f >= kMinViableTurnsPerS;
+	p.summary = "runtime plan peak=" + std::to_string(p.peak_turns_s)
+		+ " turns/s  spinup=" + std::to_string(kSpinupLeadInS)
+		+ "s  dist_cruise=" + std::to_string(dist_cruise_s)
+		+ "s  hold=" + std::to_string(cruise_time)
+		+ "s  window=" + std::to_string(p.duration_ms) + "ms"
+		+ "  expected=" + std::to_string(p.expected_distance_mm) + " mm\n";
 	return p;
 }
-
-} // namespace
 
 MotionPlanner::~MotionPlanner() {
 	// Why: no further ticks after destroy — clear active so is_busy() is false.
@@ -154,8 +169,8 @@ bool MotionPlanner::move_distance_mm_in_time(PreyMotor& motor, float distance_mm
 	}
 
 	// Why: runtime plan applies 1.5 turns/s floor + fast ramp from web-ui-odrive.
-	ChainMovePlan plan = build_runtime_plan(motor, distance_mm, duration_ms,
-		max_accel_mps2);
+	ChainMovePlan plan = runtime_plan_distance_mm_in_time(motor, distance_mm,
+		duration_ms, max_accel_mps2);
 	if (out_plan) {
 		*out_plan = plan;
 	}
@@ -179,18 +194,66 @@ float MotionPlanner::sample_speed_mps(float elapsed_s) const {
 	if (elapsed_s >= duration_s) {
 		return 0.0f;
 	}
-	if (accel_time > 1e-6f && elapsed_s < accel_time) {
-		return peak_speed * (elapsed_s / accel_time);
+	// Why: elapsed==0 makes the linear ramp command exactly 0 for the first
+	// Set_Input_Vel; advance a millisecond so the first tick produces torque.
+	const float t = std::max(elapsed_s, 0.001f);
+	if (accel_time > 1e-6f && t < accel_time) {
+		return peak_speed * (t / accel_time);
 	}
-	if (elapsed_s < accel_time + cruise_time) {
+	if (t < accel_time + cruise_time) {
 		return peak_speed;
 	}
 	if (accel_time > 1e-6f) {
-		const float decel_t = elapsed_s - accel_time - cruise_time;
+		const float decel_t = t - accel_time - cruise_time;
 		const float decel_frac = std::min(1.0f, decel_t / accel_time);
 		return peak_speed * (1.0f - decel_frac);
 	}
 	return 0.0f;
+}
+
+bool MotionPlanner::arm_closed_loop_start(IMotor& motor, int timeout_ms) {
+	float pos = 0.0f;
+	float vel = 0.0f;
+	if (!motor.try_sample_encoder(pos, vel, timeout_ms)) {
+		closed_loop_ = false;
+		start_pos_turns_ = 0.0f;
+		last_traveled_mm_ = 0.0f;
+		return false;
+	}
+	start_pos_turns_ = pos;
+	last_traveled_mm_ = 0.0f;
+	closed_loop_ = true;
+	return true;
+}
+
+bool MotionPlanner::closed_loop_distance_reached(IMotor& motor,
+	float& traveled_mm, float& sample_vel_turns_s) const
+{
+	traveled_mm = last_traveled_mm_;
+	sample_vel_turns_s = 0.0f;
+	if (!closed_loop_) {
+		return false;
+	}
+	float pos = 0.0f;
+	float vel = 0.0f;
+	if (!motor.try_sample_encoder(pos, vel, /*timeout_ms=*/0)) {
+		return false;
+	}
+	sample_vel_turns_s = vel;
+	const float mm_per_turn = std::max(plan_.mm_per_turn, 1e-3f);
+	const float dir = static_cast<float>(
+		(plan_.chain_direction_sign < 0) ? -1 : 1);
+	// Same convention as PreyMotor::turns_to_chain_mm.
+	traveled_mm = (pos - start_pos_turns_) * mm_per_turn * dir;
+	const float target = plan_.distance_mm;
+	const float progress = (target >= 0.0f) ? traveled_mm : -traveled_mm;
+	const float target_abs = std::fabs(target);
+	// Stop early by ~coast distance so Set_Input_Vel(0) settles near target.
+	float lead_mm = std::fabs(vel) * mm_per_turn * kCoastLeadS;
+	lead_mm = std::max(kCoastLeadMinMm, std::min(kCoastLeadMaxMm, lead_mm));
+	// Why: never spend more than 12% of the request on coast lead (short moves).
+	lead_mm = std::min(lead_mm, std::max(5.0f, 0.12f * target_abs));
+	return progress + lead_mm >= target_abs;
 }
 
 bool MotionPlanner::start_plan(const ChainMovePlan& plan) {
@@ -205,6 +268,9 @@ bool MotionPlanner::start_plan(const ChainMovePlan& plan) {
 	}
 	plan_ = plan;
 	cancel_.store(false);
+	need_prepare_ = true;
+	closed_loop_ = false;
+	last_traveled_mm_ = 0.0f;
 	start_time_ = std::chrono::steady_clock::now();
 	active_.store(true);
 	log_info("motor", "start_plan " + std::to_string(static_cast<int>(plan.distance_mm))
@@ -222,24 +288,65 @@ MoveTick MotionPlanner::tick(IMotor& motor) {
 		active_.store(false);
 		return MoveTick::Cancelled;
 	}
-	if (!motor.status().connected) {
+	// Why: is_connected() must not touch CAN. PreyMotor::status() blocks up to
+	// rx_timeout (~200 ms) waiting on encoder frames; short flees then hit
+	// duration_s and Done before any Set_Input_Vel is applied.
+	if (!motor.is_connected()) {
 		motor.stop();
 		active_.store(false);
 		return MoveTick::Cancelled;
 	}
 
+	if (need_prepare_) {
+		motor.prepare_velocity_move();
+		need_prepare_ = false;
+		// Arm closed-loop from the first tick (non-blocking; retry next ticks).
+		arm_closed_loop_start(motor, /*timeout_ms=*/0);
+	} else if (!closed_loop_) {
+		arm_closed_loop_start(motor, /*timeout_ms=*/0);
+	}
+
 	const float elapsed_s = std::chrono::duration<float>(
 		std::chrono::steady_clock::now() - start_time_).count();
-	if (elapsed_s >= plan_.duration_s || std::fabs(plan_.distance_mm) < 1e-3f) {
+	const float timeout_s = plan_.duration_s
+		+ (closed_loop_ ? kClosedLoopTimeoutSlackS : 0.0f);
+
+	float traveled = last_traveled_mm_;
+	float sample_vel = 0.0f;
+	if (closed_loop_distance_reached(motor, traveled, sample_vel)) {
+		last_traveled_mm_ = traveled;
 		motor.stop();
 		active_.store(false);
+		log_info("motor", "tick closed-loop stop at "
+			+ std::to_string(traveled) + " mm (target "
+			+ std::to_string(plan_.distance_mm) + " mm)");
+		return MoveTick::Done;
+	}
+	last_traveled_mm_ = traveled;
+
+	if (elapsed_s >= timeout_s || std::fabs(plan_.distance_mm) < 1e-3f) {
+		motor.stop();
+		active_.store(false);
+		if (closed_loop_) {
+			log_info("motor", "tick timeout at " + std::to_string(traveled)
+				+ " mm (target " + std::to_string(plan_.distance_mm) + " mm)");
+		}
 		return MoveTick::Done;
 	}
 
-	MotorCommand cmd;
-	cmd.mode = MotorMode::Velocity;
-	cmd.velocity_mps = sample_speed_mps(elapsed_s);
-	motor.apply(cmd);
+	// Closed-loop: hold peak until distance; open-loop: timed profile.
+	const float speed_mps = closed_loop_
+		? plan_.peak_speed_mps : sample_speed_mps(elapsed_s);
+	const float mm_per_turn = std::max(plan_.mm_per_turn, 1e-3f);
+	const float dir = static_cast<float>(
+		(plan_.chain_direction_sign < 0) ? -1 : 1);
+	const float turns_s = (speed_mps * 1000.0f / mm_per_turn) * dir;
+	if (!motor.command_turns_s(turns_s)) {
+		MotorCommand cmd;
+		cmd.mode = MotorMode::Velocity;
+		cmd.velocity_mps = speed_mps;
+		motor.apply(cmd);
+	}
 	return MoveTick::Active;
 }
 
@@ -254,25 +361,98 @@ bool MotionPlanner::execute_plan(IMotor& motor, const ChainMovePlan& plan)
 		~ScopeExit() { busy.store(false); }
 	} guard{busy_};
 
-	if (!motor.status().connected) {
+	// Non-blocking connect check — never call status() here (CAN encoder wait).
+	if (!motor.is_connected()) {
 		log_error("motor", "execute_plan: motor not connected");
 		return false;
 	}
-	// start_plan ignores busy_ so this blocking path can arm the move.
-	if (!start_plan(plan)) {
+	if (!plan.scale_ok || !plan.timing_ok) {
+		log_error("motor", "execute_plan: invalid plan\n" + plan.summary);
 		return false;
 	}
 
-	while (true) {
-		const MoveTick t = tick(motor);
-		if (t == MoveTick::Done) {
-			log_info("motor", "Move complete");
-			return true;
+	plan_ = plan;
+	cancel_.store(false);
+	active_.store(true);
+	last_traveled_mm_ = 0.0f;
+	// Re-assert mode/limits after CLOSED_LOOP (matches working direct-spin path).
+	motor.prepare_velocity_move();
+	const bool cl = arm_closed_loop_start(motor, /*timeout_ms=*/100);
+	log_info("motor", cl
+		? "execute_plan closed-loop distance stop armed"
+		: "execute_plan open-loop timed (no encoder sample at start)");
+
+	const auto start = std::chrono::steady_clock::now();
+	int applies = 0;
+	int send_ok = 0;
+	float peak_cmd_turns_s = 0.0f;
+	float last_cmd_turns_s = 0.0f;
+	float last_sample_vel = 0.0f;
+	bool stopped_on_distance = false;
+	const float mm_per_turn = std::max(plan_.mm_per_turn, 1e-3f);
+	const float dir = static_cast<float>(
+		(plan_.chain_direction_sign < 0) ? -1 : 1);
+	const float timeout_s = plan_.duration_s
+		+ (closed_loop_ ? kClosedLoopTimeoutSlackS : 0.0f);
+
+	while (!cancel_.load()) {
+		const float elapsed_s = std::chrono::duration<float>(
+			std::chrono::steady_clock::now() - start).count();
+		if (elapsed_s >= timeout_s) {
+			break;
 		}
-		if (t == MoveTick::Cancelled || t == MoveTick::Idle) {
-			log_info("motor", "Move cancelled");
-			return false;
+
+		float traveled = last_traveled_mm_;
+		float sample_vel = last_sample_vel;
+		if (closed_loop_distance_reached(motor, traveled, sample_vel)) {
+			last_traveled_mm_ = traveled;
+			last_sample_vel = sample_vel;
+			stopped_on_distance = true;
+			break;
 		}
+		last_traveled_mm_ = traveled;
+		if (sample_vel != 0.0f || closed_loop_) {
+			last_sample_vel = sample_vel;
+		}
+
+		// Closed-loop holds peak until distance; open-loop uses timed profile.
+		const float speed_mps = closed_loop_
+			? plan_.peak_speed_mps : sample_speed_mps(elapsed_s);
+		last_cmd_turns_s = (speed_mps * 1000.0f / mm_per_turn) * dir;
+		peak_cmd_turns_s = std::max(peak_cmd_turns_s, std::fabs(last_cmd_turns_s));
+		if (applies < 3) {
+			log_info("motor", "cmd #" + std::to_string(applies)
+				+ " Set_Input_Vel=" + std::to_string(last_cmd_turns_s)
+				+ " turns/s");
+		}
+		if (motor.command_turns_s(last_cmd_turns_s)) {
+			++send_ok;
+		} else {
+			MotorCommand cmd;
+			cmd.mode = MotorMode::Velocity;
+			cmd.velocity_mps = speed_mps;
+			motor.apply(cmd);
+			++send_ok;
+		}
+		++applies;
 		std::this_thread::sleep_for(std::chrono::milliseconds(20));
 	}
+
+	motor.stop();
+	active_.store(false);
+	if (cancel_.load()) {
+		log_info("motor", "Move cancelled after " + std::to_string(applies)
+			+ " commands");
+		return false;
+	}
+	log_info("motor", std::string("Move complete (")
+		+ (stopped_on_distance ? "closed-loop distance" : "timeout/open-loop")
+		+ ", " + std::to_string(applies) + " commands, send_ok="
+		+ std::to_string(send_ok) + ", peak_cmd="
+		+ std::to_string(peak_cmd_turns_s) + " turns/s, last="
+		+ std::to_string(last_cmd_turns_s) + " turns/s, sample_vel="
+		+ std::to_string(last_sample_vel) + " turns/s, traveled="
+		+ std::to_string(last_traveled_mm_) + " mm, target="
+		+ std::to_string(plan_.distance_mm) + " mm)");
+	return applies > 0 || stopped_on_distance;
 }
