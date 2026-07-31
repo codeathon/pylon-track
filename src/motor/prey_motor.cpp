@@ -104,7 +104,10 @@ void PreyMotor::apply(const MotorCommand& cmd) {
 		const float turns_s = chain_mps_to_turns_s(cmd.velocity_mps);
 		// No refresh_status here — MotionPlanner runs ~50 Hz and must keep
 		// Set_Input_Vel flowing faster than the ODrive watchdog.
-		can_.set_input_velocity(turns_s, 0.0f);
+		if (!can_.set_input_velocity(turns_s, 0.0f)) {
+			log_error("motor", "Set_Input_Vel failed ("
+				+ std::to_string(turns_s) + " turns/s)");
+		}
 	}
 }
 

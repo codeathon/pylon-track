@@ -63,7 +63,6 @@ ChainMovePlan MotionPlanner::runtime_plan_distance_mm_in_time(
 		peak_abs = peak_accel_cap;
 	}
 
-	float ramp_accel = accel;
 	const float min_viable_mps = kMinViableTurnsPerS * p.mm_per_turn / 1000.0f;
 	if (peak_abs > 1e-6f && peak_abs < min_viable_mps) {
 		log_info("motor", "Target peak " + std::to_string(peak_abs)
@@ -73,17 +72,17 @@ ChainMovePlan MotionPlanner::runtime_plan_distance_mm_in_time(
 			"the floor speed instead of commanding a speed the motor can't "
 			"sustain");
 		peak_abs = min_viable_mps;
-		ramp_accel = kFloorRampAccelMps2;
-		p.accel_mps2 = ramp_accel;
 	}
 
-	// Ramp at real accel (fast), cruise for remaining distance, clamp to time left.
-	const float accel_time = (peak_abs > 1e-6f) ? (peak_abs / ramp_accel) : 0.0f;
-	const float time_left = std::max(0.0f, duration_s - 2.0f * accel_time);
-	const float distance_cruise_time = (peak_abs > 1e-6f)
-		? std::max(0.0f, std::fabs(distance_m) / peak_abs - accel_time)
+	// Why: step/coast/stop — no linear ramp. This motor produces no motion while
+	// Set_Input_Vel is below ~1.5 turns/s, so a 20–50 ms ramp through that band
+	// (even at 50 m/s²) still wastes the first commands at dead-zone speeds.
+	// Hold peak for distance/peak (clamped to the window), then command 0.
+	const float accel_time = 0.0f;
+	const float cruise_time = (peak_abs > 1e-6f)
+		? std::min(duration_s, std::fabs(distance_m) / peak_abs)
 		: 0.0f;
-	const float cruise_time = std::min(time_left, distance_cruise_time);
+	p.accel_mps2 = kFloorRampAccelMps2; // documented intent: instant rise to peak
 
 	p.peak_speed_mps = std::copysign(peak_abs, distance_m);
 	p.accel_time_s = accel_time;
@@ -278,14 +277,18 @@ bool MotionPlanner::execute_plan(IMotor& motor, const ChainMovePlan& plan)
 		return false;
 	}
 
-	// Why: blocking tests use the pre-chase direct apply loop that was proven
-	// on the lab rig. Chase still uses start_plan + tick at 50 Hz.
+	// Why: blocking tests use a direct Set_Input_Vel loop. Prefer PreyMotor's
+	// raw turns/s API (same path as --vel-turns-s) so mm→turns conversion and
+	// CAN send failures are visible in the log.
 	plan_ = plan;
 	cancel_.store(false);
 	active_.store(true);
 	const auto start = std::chrono::steady_clock::now();
 	int applies = 0;
-	float last_cmd_mps = 0.0f;
+	int send_fail = 0;
+	float peak_cmd_turns_s = 0.0f;
+	float last_cmd_turns_s = 0.0f;
+	auto* prey = dynamic_cast<PreyMotor*>(&motor);
 
 	while (!cancel_.load()) {
 		const float elapsed_s = std::chrono::duration<float>(
@@ -293,11 +296,26 @@ bool MotionPlanner::execute_plan(IMotor& motor, const ChainMovePlan& plan)
 		if (elapsed_s >= plan_.duration_s) {
 			break;
 		}
-		MotorCommand cmd;
-		cmd.mode = MotorMode::Velocity;
-		cmd.velocity_mps = sample_speed_mps(elapsed_s);
-		last_cmd_mps = cmd.velocity_mps;
-		motor.apply(cmd);
+		const float speed_mps = sample_speed_mps(elapsed_s);
+		if (prey) {
+			last_cmd_turns_s = prey->chain_mps_to_turns_s(speed_mps);
+			peak_cmd_turns_s = std::max(peak_cmd_turns_s,
+				std::fabs(last_cmd_turns_s));
+			if (!prey->set_velocity_turns_s(last_cmd_turns_s)) {
+				++send_fail;
+			}
+			if (applies < 3) {
+				log_info("motor", "cmd #" + std::to_string(applies)
+					+ " Set_Input_Vel=" + std::to_string(last_cmd_turns_s)
+					+ " turns/s");
+			}
+		} else {
+			MotorCommand cmd;
+			cmd.mode = MotorMode::Velocity;
+			cmd.velocity_mps = speed_mps;
+			motor.apply(cmd);
+			last_cmd_turns_s = speed_mps; // FakeMotor: m/s as placeholder
+		}
 		++applies;
 		std::this_thread::sleep_for(std::chrono::milliseconds(20));
 	}
@@ -310,6 +328,8 @@ bool MotionPlanner::execute_plan(IMotor& motor, const ChainMovePlan& plan)
 		return false;
 	}
 	log_info("motor", "Move complete (" + std::to_string(applies)
-		+ " commands, last " + std::to_string(last_cmd_mps) + " m/s)");
-	return applies > 0;
+		+ " commands, peak_cmd=" + std::to_string(peak_cmd_turns_s)
+		+ " turns/s, last=" + std::to_string(last_cmd_turns_s)
+		+ " turns/s, send_fail=" + std::to_string(send_fail) + ")");
+	return applies > 0 && send_fail == 0;
 }
