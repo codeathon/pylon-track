@@ -65,10 +65,11 @@ bool MotionPlanner::move_distance_mm_in_time(PreyMotor& motor, float distance_mm
 	const float duration_s = static_cast<float>(duration_ms) / 1000.0f;
 	const float accel = (max_accel_mps2 > 0.0f) ? max_accel_mps2 : 0.5f;
 
-	// Peak for a triangle that covers |distance| in duration_s: v = 2x/t.
-	// Cap by accel so accel+decel fit in the window (v_max = a*t/2).
-	// Why: old math used peak=2*avg then ignored when accel_time > duration,
-	// so short/fast moves barely ramped before stop().
+	// Peak for a bare triangle (no cruise) spanning the FULL duration_s that
+	// covers |distance| exactly: v = 2x/t, accel_time = duration_s/2. Cap by
+	// accel so accel+decel still fit the window when the motor can't ramp
+	// that fast (v_max = a*t/2) — the move then finishes short of distance,
+	// which is unavoidable given the accel limit.
 	float peak_abs = 2.0f * std::fabs(distance_m) / duration_s;
 	const float peak_accel_cap = accel * duration_s * 0.5f;
 	if (peak_abs > peak_accel_cap) {
@@ -77,8 +78,13 @@ bool MotionPlanner::move_distance_mm_in_time(PreyMotor& motor, float distance_mm
 			+ " m/s — raise max_accel_mps2 for short/fast moves");
 		peak_abs = peak_accel_cap;
 	}
-	float accel_time = (peak_abs > 1e-6f) ? (peak_abs / accel) : 0.0f;
-	float cruise_time = std::max(0.0f, duration_s - 2.0f * accel_time);
+	// accel_time is always duration_s/2 here — NOT peak_abs/accel. Using
+	// peak_abs/accel when accel exceeds what's minimally needed shrinks
+	// accel_time and stretches cruise_time to fill the rest of duration_s at
+	// the same peak, which plans for up to ~2x the requested distance
+	// instead of just ramping to the same peak faster and holding position.
+	float accel_time = duration_s * 0.5f;
+	float cruise_time = 0.0f;
 
 	// Below this the motor doesn't reliably move at all (kMinViableTurnsPerS)
 	// — riding out duration_s at a peak that never clears the floor commands
