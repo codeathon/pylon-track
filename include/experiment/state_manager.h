@@ -32,7 +32,7 @@ enum class ExperimentPhase : uint8_t {
 struct ExperimentReadiness {
 	ComponentStatus camera = ComponentStatus::NotStarted;
 	ComponentStatus motor = ComponentStatus::NotStarted;
-	ComponentStatus trap_door = ComponentStatus::NotStarted;
+	ComponentStatus shuttle = ComponentStatus::NotStarted;
 	ComponentStatus ferret_identified = ComponentStatus::NotStarted;
 	ComponentStatus prey_identified = ComponentStatus::NotStarted;
 };
@@ -75,8 +75,7 @@ private:
 	ArenaExperimentConfig cfg_;
 
 	std::unique_ptr<class PreyMotor> prey_motor_;
-	std::unique_ptr<class TrapDoorMotor> trap_motor_;
-	std::unique_ptr<class MotionPlanner> motion_planner_;
+	std::unique_ptr<class ShuttleMotor> shuttle_motor_;
 	std::unique_ptr<class ChaseController> chase_controller_;
 	std::unique_ptr<class SessionRecorder> recorder_;
 	std::unique_ptr<class TrialStateMachine> trial_fsm_;

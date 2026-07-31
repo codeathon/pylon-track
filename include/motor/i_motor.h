@@ -2,7 +2,7 @@
 
 #include "motor/motor_types.h"
 
-// Common contract for arena motors (prey chain, trap door stub).
+// Common contract for arena motors driven by MotorCommand (prey chain).
 class IMotor {
 public:
 	virtual ~IMotor() = default;

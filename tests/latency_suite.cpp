@@ -37,23 +37,28 @@ struct LatencyArgs {
 };
 
 static bool parse_latency_args(int argc, char** argv, LatencyArgs& args) {
-	for (int i = 1; i < argc; ++i) {
-		if (std::strcmp(argv[i], "--duration") == 0 && i + 1 < argc) {
-			args.opts.duration_s = std::stod(argv[++i]);
-		} else if (std::strcmp(argv[i], "--warmup-secs") == 0 && i + 1 < argc) {
-			args.opts.warmup_s = std::stod(argv[++i]);
-		} else if (std::strcmp(argv[i], "--gsd") == 0 && i + 1 < argc) {
-			args.opts.gsd_mm_px = std::stof(argv[++i]);
-		} else if (std::strcmp(argv[i], "--camera-config") == 0 && i + 1 < argc) {
-			args.camera_config = argv[++i];
-		} else if (std::strcmp(argv[i], "--output") == 0 && i + 1 < argc) {
-			args.output_base = argv[++i];
-		} else if (std::strcmp(argv[i], "--verbose") == 0) {
-			Logger::instance().set_level(LogLevel::Debug);
-		} else {
-			std::cerr << "Unknown argument: " << argv[i] << '\n';
-			return false;
+	try {
+		for (int i = 1; i < argc; ++i) {
+			if (std::strcmp(argv[i], "--duration") == 0 && i + 1 < argc) {
+				args.opts.duration_s = std::stod(argv[++i]);
+			} else if (std::strcmp(argv[i], "--warmup-secs") == 0 && i + 1 < argc) {
+				args.opts.warmup_s = std::stod(argv[++i]);
+			} else if (std::strcmp(argv[i], "--gsd") == 0 && i + 1 < argc) {
+				args.opts.gsd_mm_px = std::stof(argv[++i]);
+			} else if (std::strcmp(argv[i], "--camera-config") == 0 && i + 1 < argc) {
+				args.camera_config = argv[++i];
+			} else if (std::strcmp(argv[i], "--output") == 0 && i + 1 < argc) {
+				args.output_base = argv[++i];
+			} else if (std::strcmp(argv[i], "--verbose") == 0) {
+				Logger::instance().set_level(LogLevel::Debug);
+			} else {
+				std::cerr << "Unknown argument: " << argv[i] << '\n';
+				return false;
+			}
 		}
+	} catch (const std::exception& e) {
+		std::cerr << "Invalid numeric argument: " << e.what() << '\n';
+		return false;
 	}
 	return true;
 }

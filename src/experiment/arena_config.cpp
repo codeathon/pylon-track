@@ -108,22 +108,27 @@ bool load_arena_experiment_config(const std::string& path, ArenaExperimentConfig
 		} else {
 			log_error("experiment", "No \"motor\" section in " + abs_path);
 		}
-		if (j.contains("trap_door")) {
-			const auto& t = j.at("trap_door");
-			out.trap_door.backend = json_or(t, "backend", out.trap_door.backend);
-			out.trap_door.open_hold_ms = json_or(t, "open_hold_ms", out.trap_door.open_hold_ms);
-			if (t.contains("labjack")) {
-				const auto& lj = t.at("labjack");
-				out.trap_door.labjack.device_type = json_or(lj, "device_type",
-					out.trap_door.labjack.device_type);
-				out.trap_door.labjack.connection = json_or(lj, "connection",
-					out.trap_door.labjack.connection);
-				out.trap_door.labjack.identifier = json_or(lj, "identifier",
-					out.trap_door.labjack.identifier);
-				out.trap_door.labjack.dio_pin = json_or(lj, "dio_pin",
-					out.trap_door.labjack.dio_pin);
-				out.trap_door.labjack.active_high = json_or(lj, "active_high",
-					out.trap_door.labjack.active_high);
+		if (j.contains("shuttle")) {
+			const auto& s = j.at("shuttle");
+			out.shuttle.backend = json_or(s, "backend", out.shuttle.backend);
+			out.shuttle.wobble_leg_ms = json_or(s, "wobble_leg_ms", out.shuttle.wobble_leg_ms);
+			out.shuttle.end_pulse_ms = json_or(s, "end_pulse_ms", out.shuttle.end_pulse_ms);
+			out.shuttle.hallway_high_turns = json_or(s, "hallway_high_turns",
+				out.shuttle.hallway_high_turns);
+			out.shuttle.hallway_low_turns = json_or(s, "hallway_low_turns",
+				out.shuttle.hallway_low_turns);
+			if (s.contains("labjack")) {
+				const auto& lj = s.at("labjack");
+				out.shuttle.labjack.device_type = json_or(lj, "device_type",
+					out.shuttle.labjack.device_type);
+				out.shuttle.labjack.connection = json_or(lj, "connection",
+					out.shuttle.labjack.connection);
+				out.shuttle.labjack.identifier = json_or(lj, "identifier",
+					out.shuttle.labjack.identifier);
+				out.shuttle.labjack.pin_a = json_or(lj, "pin_a", out.shuttle.labjack.pin_a);
+				out.shuttle.labjack.pin_b = json_or(lj, "pin_b", out.shuttle.labjack.pin_b);
+				out.shuttle.labjack.high_voltage = json_or(lj, "high_voltage",
+					out.shuttle.labjack.high_voltage);
 			}
 		}
 		if (j.contains("vision")) {

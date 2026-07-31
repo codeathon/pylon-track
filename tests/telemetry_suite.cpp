@@ -26,25 +26,30 @@ struct Options {
 };
 
 static bool parse_args(int argc, char** argv, Options& o) {
-    for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--verbose") == 0) {
-            o.verbose = true;
-        } else if (std::strcmp(argv[i], "--log-file") == 0) {
-            if (i + 1 >= argc) { std::cerr << "ERROR: --log-file needs a path\n"; return false; }
-            o.log_file = argv[++i];
-        } else if (std::strcmp(argv[i], "--camera-config") == 0) {
-            if (i + 1 >= argc) { std::cerr << "ERROR: --camera-config needs a path\n"; return false; }
-            o.camera_config = argv[++i];
-        } else if (std::strcmp(argv[i], "--warmup") == 0) {
-            if (i + 1 >= argc) { std::cerr << "ERROR: --warmup needs seconds\n"; return false; }
-            o.warmup_s = std::stod(argv[++i]);
-        } else if (std::strcmp(argv[i], "--gsd") == 0) {
-            if (i + 1 >= argc) { std::cerr << "ERROR: --gsd needs mm/px value\n"; return false; }
-            o.gsd_mm_px = std::stof(argv[++i]);
-        } else {
-            std::cerr << "ERROR: Unknown argument: " << argv[i] << '\n';
-            return false;
+    try {
+        for (int i = 1; i < argc; ++i) {
+            if (std::strcmp(argv[i], "--verbose") == 0) {
+                o.verbose = true;
+            } else if (std::strcmp(argv[i], "--log-file") == 0) {
+                if (i + 1 >= argc) { std::cerr << "ERROR: --log-file needs a path\n"; return false; }
+                o.log_file = argv[++i];
+            } else if (std::strcmp(argv[i], "--camera-config") == 0) {
+                if (i + 1 >= argc) { std::cerr << "ERROR: --camera-config needs a path\n"; return false; }
+                o.camera_config = argv[++i];
+            } else if (std::strcmp(argv[i], "--warmup") == 0) {
+                if (i + 1 >= argc) { std::cerr << "ERROR: --warmup needs seconds\n"; return false; }
+                o.warmup_s = std::stod(argv[++i]);
+            } else if (std::strcmp(argv[i], "--gsd") == 0) {
+                if (i + 1 >= argc) { std::cerr << "ERROR: --gsd needs mm/px value\n"; return false; }
+                o.gsd_mm_px = std::stof(argv[++i]);
+            } else {
+                std::cerr << "ERROR: Unknown argument: " << argv[i] << '\n';
+                return false;
+            }
         }
+    } catch (const std::exception& e) {
+        std::cerr << "ERROR: Invalid numeric argument: " << e.what() << '\n';
+        return false;
     }
     return true;
 }

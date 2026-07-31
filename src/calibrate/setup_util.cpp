@@ -1,12 +1,15 @@
 #include "calibrate/setup_util.h"
 #include "calibrate/setup_options.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <thread>
 
 #include <net/if.h>
 #include <sys/ioctl.h>
@@ -97,12 +100,12 @@ bool prompt_enter(const char* message) {
 	return static_cast<bool>(std::getline(std::cin, line));
 }
 
-bool prompt_yes_no(const char* message) {
+std::optional<bool> prompt_yes_no(const char* message) {
 	while (true) {
 		std::cout << message;
 		std::string raw;
 		if (!std::getline(std::cin, raw)) {
-			return false;
+			return std::nullopt;
 		}
 		if (raw == "y" || raw == "Y" || raw == "yes") {
 			return true;
@@ -114,12 +117,12 @@ bool prompt_yes_no(const char* message) {
 	}
 }
 
-float prompt_float(const char* message) {
+std::optional<float> prompt_float(const char* message) {
 	while (true) {
 		std::cout << message;
 		std::string raw;
 		if (!std::getline(std::cin, raw)) {
-			return 0.0f;
+			return std::nullopt;
 		}
 		try {
 			return std::stof(raw);
@@ -127,4 +130,18 @@ float prompt_float(const char* message) {
 			std::cout << "Enter a number.\n";
 		}
 	}
+}
+
+bool interruptible_sleep_ms(const SetupOptions& opts, int total_ms) {
+	constexpr int kStepMs = 50;
+	int elapsed = 0;
+	while (elapsed < total_ms) {
+		if (opts.running && !opts.running->load()) {
+			return false;
+		}
+		const int chunk = std::min(kStepMs, total_ms - elapsed);
+		std::this_thread::sleep_for(std::chrono::milliseconds(chunk));
+		elapsed += chunk;
+	}
+	return !opts.running || opts.running->load();
 }

@@ -2,8 +2,10 @@
 
 #include <chrono>
 #include <cmath>
-#include <filesystem>
 #include <sstream>
+
+#include <poll.h>
+#include <unistd.h>
 
 #include <pylon/PylonIncludes.h>
 #include <pylon/BaslerUniversalInstantCamera.h>
@@ -17,10 +19,9 @@
 #include "experiment/trial_state.h"
 #include "log/logger.h"
 #include "motor/chase_controller.h"
-#include "motor/motion_planner.h"
 #include "motor/motor_config.h"
 #include "motor/prey_motor.h"
-#include "motor/trap_door_motor.h"
+#include "motor/shuttle_motor.h"
 #include "tracker/display.h"
 #include "vision/camera_tracking_service.h"
 
@@ -34,6 +35,18 @@ constexpr int kMainLoopSleepMs = 5;
 int64_t host_time_ns() {
 	return std::chrono::duration_cast<std::chrono::nanoseconds>(
 		std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+// std::cin >> key blocks with no way to interrupt it, so poll stdin with a
+// short timeout first — lets the operator-input loop keep rechecking its
+// running flag instead of hanging shutdown()'s join() when idle.
+// (resolve_arena_config_path lives in calibrate/setup_util.cpp — shared with
+// the setup binary rather than duplicated here.)
+bool stdin_ready(int timeout_ms) {
+	pollfd pfd{};
+	pfd.fd = STDIN_FILENO;
+	pfd.events = POLLIN;
+	return poll(&pfd, 1, timeout_ms) > 0;
 }
 
 } // namespace
@@ -92,8 +105,7 @@ bool ExperimentStateManager::phase_setup() {
 
 	trial_fsm_ = std::make_unique<TrialStateMachine>();
 	prey_motor_ = std::make_unique<PreyMotor>(prey_motor_from_config(cfg_.motor));
-	trap_motor_ = std::make_unique<TrapDoorMotor>(cfg_.trap_door);
-	motion_planner_ = std::make_unique<MotionPlanner>();
+	shuttle_motor_ = std::make_unique<ShuttleMotor>(cfg_.shuttle);
 	chase_controller_ = std::make_unique<ChaseController>(
 		*prey_motor_, cfg_.chase, cfg_.motor.chain_direction_sign);
 
@@ -139,15 +151,15 @@ bool ExperimentStateManager::connect_runtime_hardware() {
 		readiness_.motor = ComponentStatus::Error;
 	}
 
-	readiness_.trap_door = ComponentStatus::Calibrating;
-	if (trap_motor_->connect()) {
-		readiness_.trap_door = ComponentStatus::Ready;
-		log_info("experiment", "Trap door ready (" + cfg_.trap_door.backend + ")");
-	} else if (cfg_.trap_door.backend == "noop") {
-		readiness_.trap_door = ComponentStatus::Ready;
+	readiness_.shuttle = ComponentStatus::Calibrating;
+	if (shuttle_motor_->connect()) {
+		readiness_.shuttle = ComponentStatus::Ready;
+		log_info("experiment", "Shuttle motor ready (" + cfg_.shuttle.backend + ")");
+	} else if (cfg_.shuttle.backend == "noop") {
+		readiness_.shuttle = ComponentStatus::Ready;
 	} else {
-		log_error("experiment", "Trap door connect failed");
-		readiness_.trap_door = ComponentStatus::Error;
+		log_error("experiment", "Shuttle motor connect failed");
+		readiness_.shuttle = ComponentStatus::Error;
 	}
 	return true;
 }
@@ -201,6 +213,7 @@ bool ExperimentStateManager::phase_configuring() {
 			GrabLoop_ProvidedByInstantCamera);
 
 		chase_controller_->start();
+		shuttle_motor_->start();
 		start_chase_feed_thread();
 		start_operator_thread();
 
@@ -286,6 +299,9 @@ void ExperimentStateManager::on_operator_key(char key) {
 void ExperimentStateManager::start_operator_thread() {
 	operator_thread_ = std::thread([this]() {
 		while (chase_feed_running_.load()) {
+			if (!stdin_ready(100)) {
+				continue; // timed out — recheck the running flag
+			}
 			char key = 0;
 			if (!(std::cin >> key)) {
 				std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -310,6 +326,9 @@ void ExperimentStateManager::chase_feed_loop() {
 			}
 			update_identity_status(frame);
 			update_experiment_phase();
+		}
+		if (shuttle_motor_ && prey_motor_) {
+			shuttle_motor_->submit_position(prey_motor_->read_position_turns());
 		}
 		std::this_thread::sleep_for(std::chrono::milliseconds(kMainLoopSleepMs));
 	}
@@ -339,8 +358,8 @@ void ExperimentStateManager::shutdown() {
 	if (prey_motor_) {
 		prey_motor_->estop();
 	}
-	if (trap_motor_) {
-		trap_motor_->estop();
+	if (shuttle_motor_) {
+		shuttle_motor_->stop();
 	}
 	if (camera_) {
 		try {

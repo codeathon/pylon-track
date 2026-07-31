@@ -8,6 +8,24 @@
 #include "motor/prey_motor.h"
 #include "log/logger.h"
 
+namespace {
+// Below this the motor doesn't reliably produce enough torque to actually
+// turn (observed on the rig) — a profile whose peak never clears this speed
+// commands motion that never happens. Native units (turns/s), not chain
+// mm/s, since this is a property of the motor itself, independent of
+// whatever sprocket/chain ratio it happens to be driving.
+constexpr float kMinViableTurnsPerS = 1.5f;
+// Ramp rate used only to reach kMinViableTurnsPerS in the floor case below —
+// separate from (and always faster than) the caller's max_accel_mps2, which
+// that case overrides. Must be fast: crawling up to the floor at a gentle
+// rate spends most of the ramp sitting in the exact low-speed range that
+// doesn't produce torque, so it can stall out before ever reaching a speed
+// that actually turns the chain. 50 m/s^2 matches the --max-accel value
+// that was confirmed on the rig to move the chain (near-instant ramp to a
+// ~1.4-1.8 m/s peak, held, before this floor logic existed).
+constexpr float kFloorRampAccelMps2 = 50.0f;
+} // namespace
+
 MotionPlanner::~MotionPlanner() {
 	cancel();
 }
@@ -53,10 +71,11 @@ bool MotionPlanner::move_distance_mm_in_time(PreyMotor& motor, float distance_mm
 	const float duration_s = static_cast<float>(duration_ms) / 1000.0f;
 	const float accel = (max_accel_mps2 > 0.0f) ? max_accel_mps2 : 0.5f;
 
-	// Peak for a triangle that covers |distance| in duration_s: v = 2x/t.
-	// Cap by accel so accel+decel fit in the window (v_max = a*t/2).
-	// Why: old math used peak=2*avg then ignored when accel_time > duration,
-	// so short/fast moves barely ramped before stop().
+	// Target peak for a bare triangle (no cruise) spanning the FULL duration_s
+	// that covers |distance| exactly: v = 2x/t. Cap by accel so accel+decel
+	// alone (no cruise) still fit the window when the motor can't ramp that
+	// fast (v_max = a*t/2) — the move then finishes short of distance, which
+	// is unavoidable given the accel limit.
 	float peak_abs = 2.0f * std::fabs(distance_m) / duration_s;
 	const float peak_accel_cap = accel * duration_s * 0.5f;
 	if (peak_abs > peak_accel_cap) {
@@ -65,9 +84,40 @@ bool MotionPlanner::move_distance_mm_in_time(PreyMotor& motor, float distance_mm
 			+ " m/s — raise max_accel_mps2 for short/fast moves");
 		peak_abs = peak_accel_cap;
 	}
+
+	// Below this the motor doesn't reliably move at all (kMinViableTurnsPerS)
+	// — a peak that never clears the floor commands motion that never
+	// happens. Ramp to the floor speed instead.
+	float ramp_accel = accel;
+	const float min_viable_mps = kMinViableTurnsPerS * motor.mm_per_turn() / 1000.0f;
+	if (peak_abs > 1e-6f && peak_abs < min_viable_mps) {
+		log_info("motor", "Target peak " + std::to_string(peak_abs)
+			+ " m/s is below this motor's minimum viable speed (~"
+			+ std::to_string(min_viable_mps) + " m/s / "
+			+ std::to_string(kMinViableTurnsPerS) + " turns/s) — moving at "
+			"the floor speed instead of commanding a speed the motor can't "
+			"sustain");
+		peak_abs = min_viable_mps;
+		ramp_accel = kFloorRampAccelMps2;
+	}
+
+	// Ramp at the REAL accel rate (fast) rather than stretching accel_time to
+	// fill duration_s — a slow linear ramp spends most of its time crawling
+	// through the sub-floor dead zone where the motor produces ~no torque.
+	// Reaching peak quickly and holding it there is what actually moves the
+	// chain. cruise_time is sized off the remaining DISTANCE (finish early
+	// once |distance| is covered) rather than off remaining time, and then
+	// clamped to whatever time duration_s actually leaves — if the accel cap
+	// forced a lower peak, there may be no time left over at all, and the
+	// move simply falls short of the target (already logged above).
+	const float accel_time = (peak_abs > 1e-6f) ? (peak_abs / ramp_accel) : 0.0f;
+	const float time_left = std::max(0.0f, duration_s - 2.0f * accel_time);
+	const float distance_cruise_time = (peak_abs > 1e-6f)
+		? std::max(0.0f, std::fabs(distance_m) / peak_abs - accel_time)
+		: 0.0f;
+	const float cruise_time = std::min(time_left, distance_cruise_time);
+
 	const float peak_speed = std::copysign(peak_abs, distance_m);
-	const float accel_time = (peak_abs > 1e-6f) ? (peak_abs / accel) : 0.0f;
-	const float cruise_time = std::max(0.0f, duration_s - 2.0f * accel_time);
 
 	const auto start = std::chrono::steady_clock::now();
 	float elapsed_s = 0.0f;
