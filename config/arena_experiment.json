@@ -28,7 +28,7 @@
 		"node_id": 0,
 		"pulley_radius_m": 0.025,
 		"chain_direction_sign": 1,
-		"chain_mm_per_motor_turn": 157.0
+		"chain_mm_per_motor_turn": 660.4
 	},
 	"chase_policy": {
 		"min_chain_speed_mps": 0.05,

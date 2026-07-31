@@ -1,6 +1,7 @@
 #include "calibrate/labjack_calibrator.h"
 
 #include <chrono>
+#include <optional>
 #include <thread>
 
 #include "calibrate/setup_util.h"
@@ -23,12 +24,20 @@ bool LabjackCalibrator::run(const ArenaExperimentConfig& cfg) {
 
 	log_info("setup", "Wobbling shuttle motor for 3s...");
 	shuttle.start();
-	std::this_thread::sleep_for(std::chrono::seconds(3));
+	const bool completed = interruptible_sleep_ms(opts_, 3000);
 	shuttle.stop();
+	if (!completed) {
+		log_error("setup", "Shuttle test interrupted — motor stopped");
+		return false;
+	}
 
 	if (!opts_.skip_interactive) {
-		const bool ok = prompt_yes_no("Did the motor wobble back and forth? [y/n]: ");
+		const std::optional<bool> ok = prompt_yes_no("Did the motor wobble back and forth? [y/n]: ");
 		if (!ok) {
+			log_error("setup", "No input received (stdin closed) — aborting");
+			return false;
+		}
+		if (!*ok) {
 			log_error("setup", "Operator rejected shuttle motor motion");
 			return false;
 		}

@@ -174,6 +174,11 @@ bool CameraCalibrator::capture_frames(const std::string& camera_config_path,
 		}
 	} catch (const GenericException& e) {
 		log_error("setup", std::string("Camera capture error: ") + e.GetDescription());
+	} catch (const cv::Exception& e) {
+		// OpenCV calls (imshow, aruco detection) run inside the same loop
+		// and throw this, not GenericException — uncaught here it skipped
+		// PylonTerminate() and aborted the rest of the setup sequence.
+		log_error("setup", std::string("Camera capture OpenCV error: ") + e.what());
 	}
 	PylonTerminate();
 	return ok;
@@ -182,9 +187,15 @@ bool CameraCalibrator::capture_frames(const std::string& camera_config_path,
 bool CameraCalibrator::calibrate_from_frames(const std::string& calib_output_path,
 	cv::Size img_size)
 {
+	if (!fs::is_directory(opts_.calib_frames_dir)) {
+		log_error("setup", "calib_frames dir not found: " + opts_.calib_frames_dir
+			+ " — run the camera capture step first (drop --skip-interactive or use --only camera)");
+		return false;
+	}
 	std::vector<std::vector<cv::Point3f>> obj_points;
 	std::vector<std::vector<cv::Point2f>> img_points;
 	int loaded = 0;
+	int skipped_mismatch = 0;
 	for (const auto& entry : fs::directory_iterator(opts_.calib_frames_dir)) {
 		if (entry.path().extension() != ".png") {
 			continue;
@@ -193,7 +204,20 @@ bool CameraCalibrator::calibrate_from_frames(const std::string& calib_output_pat
 		if (gray.empty()) {
 			continue;
 		}
-		img_size = gray.size();
+		// First frame (or the camera's configured resolution, if known)
+		// fixes img_size for the whole batch — calib_frames/ can accumulate
+		// PNGs across sessions, so a later resolution change must not
+		// silently mix mismatched pixel coordinates into one calibration.
+		if (img_size.width <= 0 || img_size.height <= 0) {
+			img_size = gray.size();
+		} else if (gray.size() != img_size) {
+			log_error("setup", "Skipping " + entry.path().filename().string()
+				+ ": " + std::to_string(gray.cols) + "x" + std::to_string(gray.rows)
+				+ " does not match calibration resolution "
+				+ std::to_string(img_size.width) + "x" + std::to_string(img_size.height));
+			++skipped_mismatch;
+			continue;
+		}
 		const CharucoDetectResult det = CharucoBoardSpec::detect(gray);
 		std::vector<cv::Point3f> obj;
 		std::vector<cv::Point2f> img;
@@ -203,6 +227,11 @@ bool CameraCalibrator::calibrate_from_frames(const std::string& calib_output_pat
 		obj_points.push_back(obj);
 		img_points.push_back(img);
 		++loaded;
+	}
+	if (skipped_mismatch > 0) {
+		log_info("setup", "Skipped " + std::to_string(skipped_mismatch)
+			+ " frame(s) with a resolution mismatch — delete stale calib_frames/ captures"
+			" if this is unexpected");
 	}
 	if (loaded < kMinFrames) {
 		log_error("setup", "Not enough valid calibration views");
@@ -228,10 +257,12 @@ bool CameraCalibrator::calibrate_from_frames(const std::string& calib_output_pat
 }
 
 bool CameraCalibrator::run(const std::string& calib_output_path, cv::Size expected_size) {
-	(void)expected_size;
 	const std::string camera_config_path = resolve_camera_config_path(
 		opts_.argv0, opts_.camera_config_path);
-	cv::Size img_size;
+	// expected_size (the camera's currently configured resolution) seeds the
+	// consistency check in calibrate_from_frames — without it, --skip-interactive
+	// runs had no resolution to validate accumulated calib_frames/ against at all.
+	cv::Size img_size = expected_size;
 	if (!opts_.skip_interactive) {
 		if (!capture_frames(camera_config_path, img_size)) {
 			return false;

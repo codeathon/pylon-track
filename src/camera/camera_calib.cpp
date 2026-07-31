@@ -231,9 +231,10 @@ bool save_camera_calib(const std::string& path, const CameraCalib& calib) {
 		return false;
 	}
 	try {
-		const std::string mode = "w";
-		save_mat64_npz(path, "K", calib.camera_matrix, mode);
-		save_mat64_npz(path, "dist", calib.dist_coeffs, mode);
+		// "w" creates/truncates the zip; every array after the first must
+		// append ("a") or it clobbers everything written so far.
+		save_mat64_npz(path, "K", calib.camera_matrix, "w");
+		save_mat64_npz(path, "dist", calib.dist_coeffs, "a");
 		const double img_size[2] = {
 			static_cast<double>(calib.image_size.width),
 			static_cast<double>(calib.image_size.height)

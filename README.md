@@ -2,7 +2,7 @@
 
 Real-time dual-animal tracking from a Basler USB3 camera using the [Basler pylon SDK](https://www.baslerweb.com/en/software/pylon/) and OpenCV. Designed for overhead arena imaging: track a **ferret** and **prey** (mouse) at ~200 fps, output position, speed, heading, and inter-animal distance in millimeters.
 
-The **arena experiment platform** adds closed-loop prey chase via an ODrive S1 chain motor, optional LabJack trap-door control, session CSV recording, and a state-managed workflow in `arena_experiment`.
+The **arena experiment platform** adds closed-loop prey chase via an ODrive S1 chain motor, an optional LabJack shuttle motor (idle wobble + hallway-end pulses — see [What the shuttle motor actually does](#what-the-shuttle-motor-actually-does)), session CSV recording, and a state-managed workflow in `arena_experiment`.
 
 **Platform:** Linux only (tested workflow targets Ubuntu with USB3 Basler cameras).
 
@@ -37,7 +37,7 @@ Two subcommands — **one-time setup** vs **per-session run**:
 
 | Subcommand | When | What it does |
 |------------|------|----------------|
-| **`setup`** | New rig / hardware change | Bundled C++ setup: arena masks, ChArUco lens, ODrive chain (CAN), LabJack trap |
+| **`setup`** | New rig / hardware change | Bundled C++ setup: arena masks, ChArUco lens, ODrive chain (CAN), LabJack shuttle motor |
 | **`run`** | Every experiment session | Load artifacts, stream camera, record CSVs, chase trials |
 
 **Setup** (once, interactive — requires `--display`):
@@ -46,7 +46,7 @@ Two subcommands — **one-time setup** vs **per-session run**:
 ./build/bin/arena_experiment setup --config config/arena_experiment.json --display
 ```
 
-Steps run in order: arena masks → camera lens → ODrive chain → LabJack trap.  
+Steps run in order: arena masks → camera lens → ODrive chain → LabJack shuttle motor.  
 Re-run one step: `--only arena|camera|odrive|labjack`.
 
 **Run** (each session):
@@ -59,7 +59,7 @@ sudo ip link set can0 up type can bitrate 250000   # if using prey motor
 Per-session flow:
 
 1. **Setup** — load config, verify `calib.npz` + motor constants from prior `setup`
-2. **Configuring** — start Pylon grab + tracking pipeline, connect motor/trap
+2. **Configuring** — start Pylon grab + tracking pipeline, connect motor/shuttle
 3. **Streaming** — MOG2 warmup 30 s (empty arena), ferret/prey identification
 4. **Chase session** — **`s`** start trial, **`e`** end, **`r`** reset
 
@@ -190,7 +190,7 @@ cmake -DOpenCV_DIR=/usr/lib/x86_64-linux-gnu/cmake/opencv4 -DPYLON_ROOT=/opt/pyl
 ### Arena experiment (closed-loop chase)
 
 ```bash
-# One-time rig setup (arena masks, ChArUco lens, ODrive chain, LabJack trap)
+# One-time rig setup (arena masks, ChArUco lens, ODrive chain, LabJack shuttle motor)
 ./build/bin/arena_experiment setup --config config/arena_experiment.json --display
 
 # Each experiment session
@@ -225,6 +225,31 @@ Session output: `sessions/arena_experiment/<timestamp>/telemetry.csv` + `events.
 
 Mark pulley/chain exclusion zones in `ignore_regions` using the interactive **arena** setup step (`setup --only arena`).
 
+#### What the shuttle motor actually does
+
+The `shuttle` section replaced an earlier trap-door design — there's no
+door and no fixed open/close timing anymore. Instead, `ShuttleMotor`
+(`src/motor/shuttle_motor.cpp`) drives a small DC motor over two LabJack
+**analog** output pins (FIO4/FIO5 by default) wired as a crude H-bridge:
+one pin high + the other low spins one direction, swapped spins the other
+way, both low stops it. It runs on its own background thread with two
+behaviors:
+
+- **Idle wobble** — while nothing else is happening, it alternates direction
+  every `wobble_leg_ms` (default 300ms each way) to make the attached prop
+  look like it's moving, without traveling far.
+- **Hallway-end pulses** — it also watches the prey chain's tracked position
+  (fed in from `PreyMotor::read_position_turns()` every ~5ms). When that
+  position crosses `hallway_high_turns` (default 15 turns) going up, it
+  drives forward for `end_pulse_ms` (default 1s). When it crosses back down
+  through `hallway_low_turns` (default 5 turns), it pulses in reverse for the
+  same duration — nudging whatever the shuttle is attached to back into
+  position at each end of the chain's travel.
+
+`high_voltage` (default 5.0V) is the "on" level written to whichever pin is
+active — FIO4/FIO5 are analog-capable pins, not fixed digital I/O, so this
+has to be a real voltage rather than a boolean write.
+
 ### One-time setup details (`arena_experiment setup`)
 
 All setup is C++ — no Python dependencies.
@@ -234,7 +259,7 @@ All setup is C++ — no Python dependencies.
 | **Arena** | `i` ignore region, `r` track ROI, LMB vertex, RMB close, `s` save, `q` quit | `vision.ignore_regions`, `vision.track_roi` in JSON |
 | **Camera** | SPACE save ChArUco frame, `q` quit (~20 frames), then auto-calibrate | `calib.npz` beside executable |
 | **ODrive** | CAN must be up; measure chain travel (mm), confirm direction | `motor.*` in JSON |
-| **LabJack** | Open/close trap; confirm motion | validates wiring (noop backend skips) |
+| **LabJack** | Wobbles the shuttle motor for 3s; confirm it moved | validates wiring (noop backend skips) |
 
 ODrive chain setup uses **SocketCAN** (same path as runtime chase). Ensure CAN is enabled on the drive (odrivetool/Web GUI once), then:
 
@@ -243,7 +268,7 @@ sudo ip link set can0 up type can bitrate 250000
 ./build/bin/arena_experiment setup --config config/arena_experiment.json --only odrive
 ```
 
-Build with LabJack trap-door support (optional):
+Build with LabJack shuttle motor support (optional):
 
 ```bash
 cmake -DENABLE_LABJACK=ON -DLJM_ROOT=/usr/local/lib ..
@@ -408,8 +433,11 @@ stdout telemetry or session CSV
 
 ```text
 CameraTrackingService ──► TrackingFrame ──► ChaseController ──► PreyMotor (SocketCAN)
-        │                                        ▲
-        └─ SessionRecorder (telemetry.csv)       └── chase_policy (cone-of-impact)
+        │                                        ▲                    │
+        └─ SessionRecorder (telemetry.csv)       └ chase_policy        │ read_position_turns()
+                                                  (cone-of-impact)      ▼
+                                                              ShuttleMotor (LabJack FIO4/FIO5)
+                                                              — idle wobble + hallway-end pulses
 ExperimentStateManager orchestrates: setup artifacts → stream → chase trial
 ```
 

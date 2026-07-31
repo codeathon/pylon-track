@@ -48,6 +48,7 @@ public:
 private:
 	void run();
 	void drive(int dir);
+	void check_crossing();
 
 	ShuttleMotorConfig cfg_;
 	LabjackHBridge labjack_;

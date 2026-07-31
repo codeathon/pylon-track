@@ -150,7 +150,14 @@ bool apply_and_capture(Pylon::CBaslerUniversalInstantCamera& camera,
 		return false;
 	}
 	std::this_thread::sleep_for(std::chrono::milliseconds(500));
-	out = capture_frames(camera, opts, session_dir, file_prefix);
+	try {
+		out = capture_frames(camera, opts, session_dir, file_prefix);
+	} catch (const Pylon::GenericException& e) {
+		// A single stalled grab (RetrieveResult throws on its 5s timeout)
+		// must not abort the whole sweep — skip this sample and continue.
+		log_warn("sweep", std::string("Skipping (grab error): ") + e.GetDescription());
+		return false;
+	}
 	return true;
 }
 
@@ -343,21 +350,26 @@ int main(int argc, char** argv) {
 	std::string sweep_path, config_path_cli, output_base = "tests/output";
 	double gsd_cli = -1.0;
 
-	for (int i = 1; i < argc; ++i) {
-		if (std::strcmp(argv[i], "--sweep") == 0 && i + 1 < argc) {
-			sweep_path = argv[++i];
-		} else if (std::strcmp(argv[i], "--camera-config") == 0 && i + 1 < argc) {
-			config_path_cli = argv[++i];
-		} else if (std::strcmp(argv[i], "--output") == 0 && i + 1 < argc) {
-			output_base = argv[++i];
-		} else if (std::strcmp(argv[i], "--gsd") == 0 && i + 1 < argc) {
-			gsd_cli = std::stod(argv[++i]);
-		} else if (std::strcmp(argv[i], "--verbose") == 0) {
-			Logger::instance().set_level(LogLevel::Debug);
-		} else {
-			std::cerr << "Unknown argument: " << argv[i] << '\n';
-			return 1;
+	try {
+		for (int i = 1; i < argc; ++i) {
+			if (std::strcmp(argv[i], "--sweep") == 0 && i + 1 < argc) {
+				sweep_path = argv[++i];
+			} else if (std::strcmp(argv[i], "--camera-config") == 0 && i + 1 < argc) {
+				config_path_cli = argv[++i];
+			} else if (std::strcmp(argv[i], "--output") == 0 && i + 1 < argc) {
+				output_base = argv[++i];
+			} else if (std::strcmp(argv[i], "--gsd") == 0 && i + 1 < argc) {
+				gsd_cli = std::stod(argv[++i]);
+			} else if (std::strcmp(argv[i], "--verbose") == 0) {
+				Logger::instance().set_level(LogLevel::Debug);
+			} else {
+				std::cerr << "Unknown argument: " << argv[i] << '\n';
+				return 1;
+			}
 		}
+	} catch (const std::exception& e) {
+		std::cerr << "Invalid numeric argument: " << e.what() << '\n';
+		return 1;
 	}
 	if (sweep_path.empty()) {
 		std::cerr << "Usage: test_param_sweep --sweep <spec.json> "

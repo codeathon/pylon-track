@@ -56,7 +56,16 @@ bool MotionPlanner::move_distance_mm_in_time(PreyMotor& motor, float distance_mm
 	}
 	peak_speed = std::copysign(peak_speed, distance_m);
 
-	const float accel_time = std::fabs(peak_speed) / accel;
+	float accel_time = std::fabs(peak_speed) / accel;
+	if (2.0f * accel_time > duration_s) {
+		// This peak speed needs longer than duration_s to both accelerate
+		// and decelerate. Clamp to a full triangle spanning the whole
+		// duration (half up, half down) so the loop always reaches its own
+		// decel branch instead of running out of time still accelerating
+		// and stopping abruptly via motor.stop() after the loop.
+		accel_time = duration_s / 2.0f;
+		peak_speed = std::copysign(accel * accel_time, distance_m);
+	}
 	const float cruise_time = std::max(0.0f, duration_s - 2.0f * accel_time);
 
 	const auto start = std::chrono::steady_clock::now();

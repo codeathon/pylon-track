@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cmath>
 #include <iostream>
+#include <optional>
 #include <thread>
 
 #include "calibrate/setup_util.h"
@@ -46,6 +47,10 @@ bool ODriveCalibrator::run(const std::string& config_path, ArenaExperimentConfig
 	if (sign != -1 && sign != 1) {
 		sign = 1;
 	}
+	// Persist the sanitized value now so --skip-interactive runs never write
+	// back the original invalid sign; the interactive jog below can still
+	// refine it from the operator's confirmation.
+	cfg.motor.chain_direction_sign = sign;
 
 	if (!opts_.skip_interactive) {
 		std::cout << "\nTest spin: " << (kTestTurnsPerS * sign) << " turns/s for "
@@ -55,9 +60,13 @@ bool ODriveCalibrator::run(const std::string& config_path, ArenaExperimentConfig
 
 	const float pos_before = motor.read_position_turns();
 	motor.set_velocity_turns_s(kTestTurnsPerS * static_cast<float>(sign));
-	std::this_thread::sleep_for(std::chrono::milliseconds(
-		static_cast<int>(kTestDurationS * 1000.0f)));
+	const bool spin_completed = interruptible_sleep_ms(opts_,
+		static_cast<int>(kTestDurationS * 1000.0f));
 	motor.set_velocity_turns_s(0.0f);
+	if (!spin_completed) {
+		log_error("setup", "Test spin interrupted — motor stopped");
+		return false;
+	}
 	std::this_thread::sleep_for(std::chrono::milliseconds(200));
 	const float pos_after = motor.read_position_turns();
 	const float delta_turns = pos_after - pos_before;
@@ -70,8 +79,13 @@ bool ODriveCalibrator::run(const std::string& config_path, ArenaExperimentConfig
 
 	float measured_mm = 100.0f;
 	if (!opts_.skip_interactive) {
-		measured_mm = prompt_float(
+		const std::optional<float> answer = prompt_float(
 			"Measure chain travel during the test (mm, absolute value): ");
+		if (!answer) {
+			log_error("setup", "No input received (stdin closed) — aborting calibration");
+			return false;
+		}
+		measured_mm = *answer;
 	}
 
 	cfg.motor.chain_mm_per_motor_turn = std::fabs(measured_mm / delta_turns);
@@ -82,10 +96,19 @@ bool ODriveCalibrator::run(const std::string& config_path, ArenaExperimentConfig
 	if (!opts_.skip_interactive) {
 		std::cout << "Short direction jog (0.5 s)...\n";
 		motor.set_velocity_turns_s(0.5f * static_cast<float>(sign));
-		std::this_thread::sleep_for(std::chrono::milliseconds(500));
+		const bool jog_completed = interruptible_sleep_ms(opts_, 500);
 		motor.set_velocity_turns_s(0.0f);
-		cfg.motor.chain_direction_sign = prompt_yes_no(
-			"Did the chain move in the prey-flee direction? [y/n]: ") ? 1 : -1;
+		if (!jog_completed) {
+			log_error("setup", "Direction jog interrupted — motor stopped");
+			return false;
+		}
+		const std::optional<bool> confirmed = prompt_yes_no(
+			"Did the chain move in the prey-flee direction? [y/n]: ");
+		if (!confirmed) {
+			log_error("setup", "No input received (stdin closed) — aborting calibration");
+			return false;
+		}
+		cfg.motor.chain_direction_sign = *confirmed ? 1 : -1;
 	}
 
 	if (!save_motor_calibration(config_path, cfg.motor)) {

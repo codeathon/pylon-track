@@ -248,11 +248,10 @@ void configure_camera(CBaslerUniversalInstantCamera& cam, const CameraSettings& 
 		set_if_writable(cam.Gamma, s.gamma, "Gamma");
 	}
 
-	if (s.exposure_time_mode == "UltraShort") {
-		apply_exposure_time_mode(cam, s.exposure_time_mode, true);
-	} else if (s.exposure_time_mode != "Standard" && s.exposure_time_mode != "Common") {
-		apply_exposure_time_mode(cam, s.exposure_time_mode, true);
-	}
+	// apply_exposure_time_mode() already validates/handles every supported
+	// value (Standard/Common/UltraShort) and throws on anything else — no
+	// need to pre-filter which values reach it here.
+	apply_exposure_time_mode(cam, s.exposure_time_mode, true);
 
 	set_if_writable(cam.ExposureAuto,
 		s.exposure_auto ? ExposureAuto_Continuous : ExposureAuto_Off,

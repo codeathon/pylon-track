@@ -59,28 +59,37 @@ bool load_one_time_spec(const std::string& path, OneTimeSpec& out) {
 		return false;
 	}
 
-	out.description = root.value("description", "");
-	out.manual_steps.clear();
-	if (root.contains("manual_steps")) {
-		out.manual_steps = root.at("manual_steps").get<std::vector<std::string>>();
-	}
+	try {
+		if (!root.contains("camera")) {
+			log_error("one_time", "Settings file missing required \"camera\" section: " + path);
+			return false;
+		}
+		out.description = root.value("description", "");
+		out.manual_steps.clear();
+		if (root.contains("manual_steps")) {
+			out.manual_steps = root.at("manual_steps").get<std::vector<std::string>>();
+		}
 
-	// Write camera block to a temp file so we reuse the production loader.
-	const fs::path tmp = fs::temp_directory_path() / "pylon_one_time_camera.json";
-	{
-		std::ofstream tmp_file(tmp);
-		tmp_file << root.at("camera").dump(4);
-	}
-	if (!load_camera_config(tmp.string(), out.camera)) {
+		// Write camera block to a temp file so we reuse the production loader.
+		const fs::path tmp = fs::temp_directory_path() / "pylon_one_time_camera.json";
+		{
+			std::ofstream tmp_file(tmp);
+			tmp_file << root.at("camera").dump(4);
+		}
+		if (!load_camera_config(tmp.string(), out.camera)) {
+			return false;
+		}
+
+		const json verify = root.value("verification", json::object());
+		out.verify_frames = verify.value("frames", 30);
+		out.save_images = verify.value("save_images", 1);
+		out.min_mean_gray = verify.value("min_mean_gray", 40.0);
+		out.max_mean_gray = verify.value("max_mean_gray", 200.0);
+		out.max_clipped_pct = verify.value("max_clipped_pct", 2.0);
+	} catch (const std::exception& e) {
+		log_error("one_time", std::string("Invalid settings file ") + path + ": " + e.what());
 		return false;
 	}
-
-	const json verify = root.value("verification", json::object());
-	out.verify_frames = verify.value("frames", 30);
-	out.save_images = verify.value("save_images", 1);
-	out.min_mean_gray = verify.value("min_mean_gray", 40.0);
-	out.max_mean_gray = verify.value("max_mean_gray", 200.0);
-	out.max_clipped_pct = verify.value("max_clipped_pct", 2.0);
 	return true;
 }
 

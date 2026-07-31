@@ -34,10 +34,17 @@ int run_telemetry(Pylon::CBaslerUniversalInstantCamera& camera,
     while (keep_running.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
-        if (!tracker.ferret.valid || !tracker.prey.valid) {
+        // get_tracking_frame() is the thread-safe snapshot; the raw
+        // ferret/prey public members are written unlocked from the Pylon
+        // grab thread, so reading them directly here would be a data race.
+        TrackingFrame frame;
+        if (!tracker.get_tracking_frame(frame)
+            || !frame.ferret.state.valid || !frame.prey.state.valid) {
             had_valid_last = false;
             continue;
         }
+        const TrackState& ferret_state = frame.ferret.state;
+        const TrackState& prey_state = frame.prey.state;
 
         const auto now = SteadyClock::now();
 
@@ -54,8 +61,8 @@ int run_telemetry(Pylon::CBaslerUniversalInstantCamera& camera,
         last_print_time = now;
         had_valid_last  = true;
 
-        const float dx = tracker.ferret.pos_mm.x - tracker.prey.pos_mm.x;
-        const float dy = tracker.ferret.pos_mm.y - tracker.prey.pos_mm.y;
+        const float dx = ferret_state.pos_mm.x - prey_state.pos_mm.x;
+        const float dy = ferret_state.pos_mm.y - prey_state.pos_mm.y;
         const float distance_mm = std::sqrt(dx * dx + dy * dy);
 
         std::printf(
@@ -64,10 +71,10 @@ int run_telemetry(Pylon::CBaslerUniversalInstantCamera& camera,
             "Prey: (%.0f, %.0f)mm  %.0fmm/s  %.0fdeg  |  "
             "Dist: %.0fmm\n",
             elapsed_ms, dt_ms, hz,
-            tracker.ferret.pos_mm.x, tracker.ferret.pos_mm.y,
-            tracker.ferret.speed_mm_s, tracker.ferret.direction_deg,
-            tracker.prey.pos_mm.x,   tracker.prey.pos_mm.y,
-            tracker.prey.speed_mm_s,  tracker.prey.direction_deg,
+            ferret_state.pos_mm.x, ferret_state.pos_mm.y,
+            ferret_state.speed_mm_s, ferret_state.direction_deg,
+            prey_state.pos_mm.x,   prey_state.pos_mm.y,
+            prey_state.speed_mm_s,  prey_state.direction_deg,
             distance_mm);
     }
 

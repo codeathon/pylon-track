@@ -17,10 +17,12 @@ void ArenaMask::apply(cv::Mat& foreground_mask) const {
 
 	// Clip to arena floor ROI first so MOG2 blobs outside the floor are dropped.
 	if (has_track_roi_) {
-		cv::Mat roi_mask = cv::Mat::zeros(foreground_mask.size(), CV_8UC1);
-		const std::vector<std::vector<cv::Point>> roi_poly = {track_roi_};
-		cv::fillPoly(roi_mask, roi_poly, 255);
-		cv::bitwise_and(foreground_mask, roi_mask, foreground_mask);
+		if (roi_mask_.size() != foreground_mask.size() || roi_mask_.type() != CV_8UC1) {
+			roi_mask_ = cv::Mat::zeros(foreground_mask.size(), CV_8UC1);
+			const std::vector<std::vector<cv::Point>> roi_poly = {track_roi_};
+			cv::fillPoly(roi_mask_, roi_poly, 255);
+		}
+		cv::bitwise_and(foreground_mask, roi_mask_, foreground_mask);
 	}
 
 	// Zero pulley/chain exclusion zones so rig hardware never becomes a track candidate.

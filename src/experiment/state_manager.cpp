@@ -5,6 +5,9 @@
 #include <filesystem>
 #include <sstream>
 
+#include <poll.h>
+#include <unistd.h>
+
 #include <pylon/PylonIncludes.h>
 #include <pylon/BaslerUniversalInstantCamera.h>
 
@@ -16,7 +19,6 @@
 #include "experiment/trial_state.h"
 #include "log/logger.h"
 #include "motor/chase_controller.h"
-#include "motor/motion_planner.h"
 #include "motor/motor_config.h"
 #include "motor/prey_motor.h"
 #include "motor/shuttle_motor.h"
@@ -51,6 +53,16 @@ std::string resolve_arena_config_path(const char* argv0, const std::string& user
 		}
 	}
 	return {};
+}
+
+// std::cin >> key blocks with no way to interrupt it, so poll stdin with a
+// short timeout first — lets the operator-input loop keep rechecking its
+// running flag instead of hanging shutdown()'s join() when idle.
+bool stdin_ready(int timeout_ms) {
+	pollfd pfd{};
+	pfd.fd = STDIN_FILENO;
+	pfd.events = POLLIN;
+	return poll(&pfd, 1, timeout_ms) > 0;
 }
 
 } // namespace
@@ -110,7 +122,6 @@ bool ExperimentStateManager::phase_setup() {
 	trial_fsm_ = std::make_unique<TrialStateMachine>();
 	prey_motor_ = std::make_unique<PreyMotor>(prey_motor_from_config(cfg_.motor));
 	shuttle_motor_ = std::make_unique<ShuttleMotor>(cfg_.shuttle);
-	motion_planner_ = std::make_unique<MotionPlanner>();
 	chase_controller_ = std::make_unique<ChaseController>(
 		*prey_motor_, cfg_.chase, cfg_.motor.chain_direction_sign);
 
@@ -301,6 +312,9 @@ void ExperimentStateManager::on_operator_key(char key) {
 void ExperimentStateManager::start_operator_thread() {
 	operator_thread_ = std::thread([this]() {
 		while (chase_feed_running_.load()) {
+			if (!stdin_ready(100)) {
+				continue; // timed out — recheck the running flag
+			}
 			char key = 0;
 			if (!(std::cin >> key)) {
 				std::this_thread::sleep_for(std::chrono::milliseconds(50));

@@ -89,28 +89,37 @@ CaptureResult capture_frames(Pylon::CBaslerUniversalInstantCamera& camera,
 	SteadyClock::time_point first_ts{}, last_ts{};
 	Pylon::CGrabResultPtr grab;
 
-	while (camera.IsGrabbing()) {
-		camera.RetrieveResult(5000, grab, Pylon::TimeoutHandling_ThrowException);
-		if (!grab->GrabSucceeded()) {
-			continue;
-		}
-		const auto now = SteadyClock::now();
-		if (result.frames == 0) {
-			first_ts = now;
-		}
-		last_ts = now;
+	try {
+		while (camera.IsGrabbing()) {
+			camera.RetrieveResult(5000, grab, Pylon::TimeoutHandling_ThrowException);
+			if (!grab->GrabSucceeded()) {
+				continue;
+			}
+			const auto now = SteadyClock::now();
+			if (result.frames == 0) {
+				first_ts = now;
+			}
+			last_ts = now;
 
-		const cv::Mat frame(grab->GetHeight(), grab->GetWidth(),
-			CV_8UC1, grab->GetBuffer());
-		per_frame.push_back(compute_image_metrics(frame));
+			const cv::Mat frame(grab->GetHeight(), grab->GetWidth(),
+				CV_8UC1, grab->GetBuffer());
+			per_frame.push_back(compute_image_metrics(frame));
 
-		if (result.frames < opts.save_images) {
-			char name[192];
-			std::snprintf(name, sizeof(name), "%s_%s_f%03d.png",
-				timestamp_label().c_str(), file_prefix.c_str(), result.frames);
-			cv::imwrite((fs::path(session_dir) / name).string(), frame);
+			if (result.frames < opts.save_images) {
+				char name[192];
+				std::snprintf(name, sizeof(name), "%s_%s_f%03d.png",
+					timestamp_label().c_str(), file_prefix.c_str(), result.frames);
+				cv::imwrite((fs::path(session_dir) / name).string(), frame);
+			}
+			++result.frames;
 		}
-		++result.frames;
+	} catch (...) {
+		// A stalled grab throws mid-loop (TimeoutHandling_ThrowException) —
+		// StopGrabbing() must still run so the camera isn't left grabbing
+		// for the caller's next sweep iteration, then let the caller decide
+		// whether to skip this sample or abort.
+		camera.StopGrabbing();
+		throw;
 	}
 	camera.StopGrabbing();
 

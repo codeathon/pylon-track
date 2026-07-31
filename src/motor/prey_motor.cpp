@@ -55,13 +55,24 @@ float PreyMotor::turns_to_chain_mm(float turns) const {
 	return turns * mm_per_turn_ * static_cast<float>(cfg_.chain_direction_sign);
 }
 
+float PreyMotor::chain_mm_to_turns(float chain_mm) const {
+	if (mm_per_turn_ <= 0.0f) {
+		return 0.0f;
+	}
+	return (chain_mm / mm_per_turn_) * static_cast<float>(cfg_.chain_direction_sign);
+}
+
 void PreyMotor::refresh_status() const {
 	if (!status_.connected) {
 		return;
 	}
+	// CAN round-trip happens outside the lock (ODriveCan serializes its own
+	// I/O) — only the status_ write itself needs to be atomic w.r.t. other
+	// threads calling status()/read_position_turns() concurrently.
 	float pos = 0.0f;
 	float vel = 0.0f;
 	if (can_.get_encoder_estimates(pos, vel)) {
+		std::lock_guard<std::mutex> lock(status_mutex_);
 		status_.position_turns = pos;
 		status_.velocity_turns_s = vel;
 		status_.chain_position_mm = turns_to_chain_mm(pos);
@@ -107,6 +118,7 @@ void PreyMotor::estop() {
 
 MotorStatus PreyMotor::status() const {
 	refresh_status();
+	std::lock_guard<std::mutex> lock(status_mutex_);
 	return status_;
 }
 
@@ -128,5 +140,6 @@ bool PreyMotor::set_velocity_turns_s(float turns_s) {
 
 float PreyMotor::read_position_turns() const {
 	refresh_status();
+	std::lock_guard<std::mutex> lock(status_mutex_);
 	return status_.position_turns;
 }
