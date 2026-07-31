@@ -50,7 +50,8 @@ public:
 	MoveTick tick(IMotor& motor);
 	bool is_move_active() const { return active_.load(); }
 
-	// Blocking execute (test_odrive_move) — loops start_plan + tick.
+	// Blocking execute (test_odrive_move) — direct apply loop at ~50 Hz.
+	// Chase uses start_plan + tick instead (non-blocking).
 	bool execute_plan(IMotor& motor, const ChainMovePlan& plan);
 
 	// Cooperative cancel: next tick() → Cancelled + motor.stop().

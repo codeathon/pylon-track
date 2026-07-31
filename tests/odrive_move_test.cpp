@@ -179,16 +179,19 @@ int main(int argc, char** argv) {
 				duration_ms = 1;
 			}
 		}
-		// Same public API chase/setup will use — plan before move.
-		const ChainMovePlan plan = MotionPlanner::plan_distance_mm_in_time(motor,
-			args.distance_mm, duration_ms, args.accel_mps2);
-		std::cout << plan.summary;
+		// Feasibility checklist (offline) — not what execute sends.
+		const ChainMovePlan checklist = MotionPlanner::plan_distance_mm_in_time(
+			motor, args.distance_mm, duration_ms, args.accel_mps2);
+		std::cout << checklist.summary;
+		// Runtime profile (floor + fast ramp) — what move_distance actually runs.
+		const ChainMovePlan runtime = MotionPlanner::runtime_plan_distance_mm_in_time(
+			motor, args.distance_mm, duration_ms, args.accel_mps2);
+		std::cout << "=== Runtime execute profile ===\n" << runtime.summary;
 		if (args.plan_only) {
-			return plan.feasible ? 0 : 1;
+			return runtime.feasible ? 0 : 1;
 		}
-		if (!plan.feasible) {
-			log_error("test", "Plan not feasible — fix parameters above, or pass "
-				"--plan-only to inspect without moving");
+		if (!runtime.feasible) {
+			log_error("test", "Runtime plan not feasible — fix parameters above");
 			return 1;
 		}
 	}

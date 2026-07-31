@@ -88,16 +88,24 @@ ChainMovePlan MotionPlanner::runtime_plan_distance_mm_in_time(
 	p.peak_speed_mps = std::copysign(peak_abs, distance_m);
 	p.accel_time_s = accel_time;
 	p.cruise_time_s = cruise_time;
-	// Tick Done when the profile ends (may finish early after floor lift).
-	p.duration_s = 2.0f * accel_time + cruise_time;
-	p.duration_ms = static_cast<int>(std::lround(p.duration_s * 1000.0f));
+	// Why: keep the *requested* duration as the execute/tick window (matches the
+	// pre-chase loop proven on the rig). After accel+cruise+decel the sampler
+	// returns 0 and we keep feeding Set_Input_Vel(0) until duration elapses —
+	// shortening the window here caused short moves to end before the motor
+	// had spun up.
+	p.duration_s = duration_s;
+	p.duration_ms = duration_ms;
 	p.expected_distance_mm = std::copysign(
 		1000.0f * peak_abs * (accel_time + cruise_time), distance_mm);
 	p.peak_turns_s = (p.peak_speed_mps * 1000.0f / p.mm_per_turn)
 		* static_cast<float>(p.chain_direction_sign);
 	p.vel_limit_ok = std::fabs(p.peak_turns_s) <= p.odrive_vel_limit_turns_s + 1e-3f;
-	p.feasible = p.scale_ok && p.timing_ok && p.vel_limit_ok;
-	p.summary = "runtime plan peak=" + std::to_string(p.peak_turns_s) + " turns/s\n";
+	p.feasible = p.scale_ok && p.timing_ok && p.vel_limit_ok
+		&& std::fabs(p.peak_turns_s) + 1e-3f >= kMinViableTurnsPerS;
+	p.summary = "runtime plan peak=" + std::to_string(p.peak_turns_s)
+		+ " turns/s  accel_t=" + std::to_string(accel_time)
+		+ "s  cruise_t=" + std::to_string(cruise_time)
+		+ "s  window=" + std::to_string(duration_ms) + "ms\n";
 	return p;
 }
 
@@ -179,14 +187,17 @@ float MotionPlanner::sample_speed_mps(float elapsed_s) const {
 	if (elapsed_s >= duration_s) {
 		return 0.0f;
 	}
-	if (accel_time > 1e-6f && elapsed_s < accel_time) {
-		return peak_speed * (elapsed_s / accel_time);
+	// Why: elapsed==0 makes the linear ramp command exactly 0 for the first
+	// Set_Input_Vel; advance a millisecond so the first tick produces torque.
+	const float t = std::max(elapsed_s, 0.001f);
+	if (accel_time > 1e-6f && t < accel_time) {
+		return peak_speed * (t / accel_time);
 	}
-	if (elapsed_s < accel_time + cruise_time) {
+	if (t < accel_time + cruise_time) {
 		return peak_speed;
 	}
 	if (accel_time > 1e-6f) {
-		const float decel_t = elapsed_s - accel_time - cruise_time;
+		const float decel_t = t - accel_time - cruise_time;
 		const float decel_frac = std::min(1.0f, decel_t / accel_time);
 		return peak_speed * (1.0f - decel_frac);
 	}
@@ -257,25 +268,48 @@ bool MotionPlanner::execute_plan(IMotor& motor, const ChainMovePlan& plan)
 		~ScopeExit() { busy.store(false); }
 	} guard{busy_};
 
-	if (!motor.status().connected) {
+	// Non-blocking connect check — never call status() here (CAN encoder wait).
+	if (!motor.is_connected()) {
 		log_error("motor", "execute_plan: motor not connected");
 		return false;
 	}
-	// start_plan ignores busy_ so this blocking path can arm the move.
-	if (!start_plan(plan)) {
+	if (!plan.scale_ok || !plan.timing_ok) {
+		log_error("motor", "execute_plan: invalid plan\n" + plan.summary);
 		return false;
 	}
 
-	while (true) {
-		const MoveTick t = tick(motor);
-		if (t == MoveTick::Done) {
-			log_info("motor", "Move complete");
-			return true;
+	// Why: blocking tests use the pre-chase direct apply loop that was proven
+	// on the lab rig. Chase still uses start_plan + tick at 50 Hz.
+	plan_ = plan;
+	cancel_.store(false);
+	active_.store(true);
+	const auto start = std::chrono::steady_clock::now();
+	int applies = 0;
+	float last_cmd_mps = 0.0f;
+
+	while (!cancel_.load()) {
+		const float elapsed_s = std::chrono::duration<float>(
+			std::chrono::steady_clock::now() - start).count();
+		if (elapsed_s >= plan_.duration_s) {
+			break;
 		}
-		if (t == MoveTick::Cancelled || t == MoveTick::Idle) {
-			log_info("motor", "Move cancelled");
-			return false;
-		}
+		MotorCommand cmd;
+		cmd.mode = MotorMode::Velocity;
+		cmd.velocity_mps = sample_speed_mps(elapsed_s);
+		last_cmd_mps = cmd.velocity_mps;
+		motor.apply(cmd);
+		++applies;
 		std::this_thread::sleep_for(std::chrono::milliseconds(20));
 	}
+
+	motor.stop();
+	active_.store(false);
+	if (cancel_.load()) {
+		log_info("motor", "Move cancelled after " + std::to_string(applies)
+			+ " commands");
+		return false;
+	}
+	log_info("motor", "Move complete (" + std::to_string(applies)
+		+ " commands, last " + std::to_string(last_cmd_mps) + " m/s)");
+	return applies > 0;
 }
