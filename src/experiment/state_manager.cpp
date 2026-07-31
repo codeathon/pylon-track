@@ -19,6 +19,7 @@
 #include "experiment/trial_state.h"
 #include "log/logger.h"
 #include "motor/chase_controller.h"
+#include "motor/motion_planner.h"
 #include "motor/motor_config.h"
 #include "motor/prey_motor.h"
 #include "motor/shuttle_motor.h"
@@ -106,8 +107,10 @@ bool ExperimentStateManager::phase_setup() {
 	trial_fsm_ = std::make_unique<TrialStateMachine>();
 	prey_motor_ = std::make_unique<PreyMotor>(prey_motor_from_config(cfg_.motor));
 	shuttle_motor_ = std::make_unique<ShuttleMotor>(cfg_.shuttle);
+	// Why: chase flees tick MotionPlanner non-blockingly at 50 Hz.
+	motion_planner_ = std::make_unique<MotionPlanner>();
 	chase_controller_ = std::make_unique<ChaseController>(
-		*prey_motor_, cfg_.chase, cfg_.motor.chain_direction_sign);
+		*prey_motor_, *motion_planner_, cfg_.chase, cfg_.motor.chain_direction_sign);
 
 	log_info("experiment", "Setup complete — config: " + cfg_path);
 	return true;

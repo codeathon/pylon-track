@@ -76,6 +76,7 @@ private:
 
 	std::unique_ptr<class PreyMotor> prey_motor_;
 	std::unique_ptr<class ShuttleMotor> shuttle_motor_;
+	std::unique_ptr<class MotionPlanner> motion_planner_;
 	std::unique_ptr<class ChaseController> chase_controller_;
 	std::unique_ptr<class SessionRecorder> recorder_;
 	std::unique_ptr<class TrialStateMachine> trial_fsm_;

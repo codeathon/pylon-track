@@ -35,7 +35,13 @@
 		"max_chain_speed_mps": 0.8,
 		"cone_half_angle_deg": 45.0,
 		"threat_distance_mm": 800.0,
-		"creep_distance_mm": 2000.0
+		"creep_distance_mm": 2000.0,
+		"flee_threat_threshold": 0.35,
+		"min_flee_mm": 50.0,
+		"max_flee_mm": 400.0,
+		"flee_gap_gain": 0.25,
+		"flee_speed_gain": 0.15,
+		"flee_accel_mps2": 5.0
 	},
 	"trial": {
 		"timeout_s": 120.0

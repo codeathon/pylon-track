@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include "experiment/arena_config.h"
+#include "motor/chain_move_plan.h"
 #include "motor/motor_types.h"
 #include "vision/tracking_frame.h"
 
@@ -12,10 +13,14 @@ struct ChaseDecision {
 	int flee_direction_sign = 1;
 	float threat = 0.0f;
 	bool enable_motion = false;
+	// When true, controller should start planned_flee (if planner idle).
+	bool use_planned_flee = false;
+	ChainMovePlan planned_flee;
 	const char* reason = "idle";
 };
 
+// mm_per_turn + flee_sign needed so planned flees consult MotionPlanner feasibility.
 ChaseDecision compute_chase_decision(const TrackingFrame& scene,
-	const ChasePolicyConfig& cfg, int flee_direction_sign = 1);
+	const ChasePolicyConfig& cfg, int flee_direction_sign, float mm_per_turn);
 
 MotorCommand chase_decision_to_prey_command(const ChaseDecision& decision);

@@ -306,6 +306,17 @@ if(UNIX)
 	)
 	add_dependencies(test_odrive_move copy_arena_config)
 
+	# Offline MotionPlanner unit tests (fake IMotor — no CAN hardware).
+	add_executable(test_motion_planner
+		tests/motion_planner_test.cpp
+		src/log/logger.cpp
+		src/motor/motion_planner.cpp
+	)
+	target_include_directories(test_motion_planner PRIVATE
+		${CMAKE_SOURCE_DIR}/include
+	)
+	target_link_libraries(test_motion_planner pthread)
+
 	# RPATH: embed pylon lib path so the binary runs without LD_LIBRARY_PATH
 	set_target_properties(ferret_tracker PROPERTIES
 		INSTALL_RPATH "${PYLON_ROOT}/lib"
@@ -373,6 +384,7 @@ if(UNIX)
 		"  make                  — build + bring can0 UP (sudo; INSTALL_CAN0_HOST)\n"
 		"  make arena_experiment — build experiment + bring can0 UP\n"
 		"  make test_odrive_move — chain distance/speed move via MotionPlanner\n"
+		"  make test_motion_planner — offline MotionPlanner unit tests (no CAN)\n"
 		"  make ferret_tracker   — build → bin/ferret_tracker\n"
 		"  make run_rt           — run with SCHED_FIFO priority (low jitter)\n"
 		"  make install_udev     — install udev rules for USB camera access\n"

@@ -13,6 +13,13 @@ struct ChasePolicyConfig {
 	float cone_half_angle_deg = 45.0f;
 	float threat_distance_mm = 800.0f;
 	float creep_distance_mm = 2000.0f;
+	// Planned flee bursts (MotionPlanner) when threat exceeds threshold.
+	float flee_threat_threshold = 0.35f;
+	float min_flee_mm = 50.0f;
+	float max_flee_mm = 400.0f;
+	float flee_gap_gain = 0.25f;   // fraction of current ferret–prey gap
+	float flee_speed_gain = 0.15f; // seconds of closing-speed look-ahead
+	float flee_accel_mps2 = 5.0f;
 };
 
 struct MotorConfig {
