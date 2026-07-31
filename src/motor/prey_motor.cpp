@@ -199,3 +199,28 @@ bool PreyMotor::read_axis_state(uint32_t& axis_error, uint32_t& axis_state) cons
 	}
 	return can_.get_axis_state(axis_error, axis_state);
 }
+
+bool PreyMotor::assert_velocity_control() {
+	if (!status_.connected) {
+		return false;
+	}
+	// Why: lab saw state=8/err=0 with sample_vel≈0 — re-assert mode+limits
+	// without cycling IDLE (GUI can leave vel_limit=0 or wrong control_mode).
+	return can_.refresh_velocity_limits();
+}
+
+bool PreyMotor::try_get_iq(float& iq_setpoint, float& iq_measured, int timeout_ms) const {
+	if (!is_connected()) {
+		return false;
+	}
+	return can_.get_iq(iq_setpoint, iq_measured, timeout_ms);
+}
+
+bool PreyMotor::try_get_active_errors(uint32_t& active_errors, uint32_t& disarm_reason,
+	int timeout_ms) const
+{
+	if (!is_connected()) {
+		return false;
+	}
+	return can_.get_active_errors(active_errors, disarm_reason, timeout_ms);
+}

@@ -39,6 +39,11 @@ public:
 	float read_position_turns() const;
 	// Heartbeat Axis_Error / Axis_State (for setup diagnostics).
 	bool read_axis_state(uint32_t& axis_error, uint32_t& axis_state) const;
+	// Re-send velocity + limits + CLOSED_LOOP (before a spin if tracking is dead).
+	bool assert_velocity_control();
+	bool try_get_iq(float& iq_setpoint, float& iq_measured, int timeout_ms = 0) const;
+	bool try_get_active_errors(uint32_t& active_errors, uint32_t& disarm_reason,
+		int timeout_ms = 0) const;
 
 	// Chain ↔ motor unit conversions (public for motion planner + calibration).
 	float chain_mps_to_turns_s(float chain_mps) const;

@@ -87,13 +87,41 @@ def main() -> int:
 	time.sleep(0.3)
 
 	print(f"Spinning node {node} at {args.vel} turns/s for {args.seconds}s...")
+	enc_id = (node << 5) | 0x09
+	pos0 = None
+	pos_last = None
+	last_vel = 0.0
+	n = 0
 	t_end = time.monotonic() + args.seconds
 	while time.monotonic() < t_end:
 		send(0x0D, struct.pack("<ff", args.vel, 0.0))
-		time.sleep(0.1)
+		n += 1
+		# Drain RX; keep latest encoder estimates for a motion check.
+		while True:
+			msg = bus.recv(timeout=0)
+			if msg is None:
+				break
+			if msg.arbitration_id == enc_id and len(msg.data) >= 8:
+				pos_last, last_vel = struct.unpack("<ff", bytes(msg.data[:8]))
+				if pos0 is None:
+					pos0 = pos_last
+		if n == 1 or n % 10 == 0:
+			delta = 0.0 if pos0 is None or pos_last is None else (pos_last - pos0)
+			print(f"  cmd#{n} sample_vel={last_vel:.4f} delta_turns={delta:.4f}")
+		time.sleep(0.05)
 	send(0x0D, struct.pack("<ff", 0.0, 0.0))
 	send(0x07, struct.pack("<I", 1))  # IDLE
-	print("Done.")
+	t_drain = time.monotonic() + 0.3
+	while time.monotonic() < t_drain:
+		msg = bus.recv(timeout=0.05)
+		if msg is not None and msg.arbitration_id == enc_id and len(msg.data) >= 8:
+			pos_last, last_vel = struct.unpack("<ff", bytes(msg.data[:8]))
+	delta = 0.0 if pos0 is None or pos_last is None else (pos_last - pos0)
+	print(f"Done. encoder_delta={delta:.4f} turns  last_vel={last_vel:.4f}")
+	if abs(delta) < 0.1:
+		print("FAIL: motor did not spin — fix vel_limit/control_mode/calibration in GUI")
+		return 1
+	print("OK: motor moved")
 	return 0
 
 

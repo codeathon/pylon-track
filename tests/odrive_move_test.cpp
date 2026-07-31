@@ -84,12 +84,20 @@ struct Args {
 // so encoder delta stayed ~0 even though axis_state=8 / err=0. Keep commanding
 // at ~50 Hz; sample feedback without blocking the cadence.
 float spin_turns_s_for(PreyMotor& motor, float turns_s, float seconds) {
+	// Re-assert mode/limits in case GUI left vel_limit=0.
+	if (!motor.assert_velocity_control()) {
+		log_error("test", "assert_velocity_control (mode+limits) failed");
+	}
 	const float pos_before = motor.read_position_turns();
 	const auto end = std::chrono::steady_clock::now()
 		+ std::chrono::milliseconds(static_cast<int>(seconds * 1000.0f));
 	float vel_sample = 0.0f;
+	float iq_sp = 0.0f;
+	float iq_meas = 0.0f;
 	uint32_t err = 0;
 	uint32_t state = 0;
+	uint32_t active_err = 0;
+	uint32_t disarm = 0;
 	int cmds = 0;
 	while (std::chrono::steady_clock::now() < end) {
 		if (!motor.set_velocity_turns_s(turns_s)) {
@@ -98,10 +106,21 @@ float spin_turns_s_for(PreyMotor& motor, float turns_s, float seconds) {
 			return motor.read_position_turns() - pos_before;
 		}
 		++cmds;
-		// Non-blocking encoder peek; heartbeat only every ~200 ms.
 		float peek = 0.0f;
 		if (motor.try_sample_velocity_turns_s(peek, /*timeout_ms=*/0)) {
 			vel_sample = peek;
+		}
+		float iq_a = 0.0f;
+		float iq_b = 0.0f;
+		if (motor.try_get_iq(iq_a, iq_b, /*timeout_ms=*/0)) {
+			iq_sp = iq_a;
+			iq_meas = iq_b;
+		}
+		uint32_t ae = 0;
+		uint32_t dr = 0;
+		if (motor.try_get_active_errors(ae, dr, /*timeout_ms=*/0)) {
+			active_err = ae;
+			disarm = dr;
 		}
 		if (cmds == 1 || cmds % 10 == 0) {
 			motor.read_axis_state(err, state);
@@ -109,22 +128,28 @@ float spin_turns_s_for(PreyMotor& motor, float turns_s, float seconds) {
 			oss << "spin cmd#" << cmds
 				<< " cmd=" << turns_s
 				<< " sample_vel=" << vel_sample
+				<< " iq_sp=" << iq_sp
+				<< " iq_meas=" << iq_meas
 				<< " axis_state=" << state
-				<< " err=0x" << std::hex << err << std::dec;
+				<< " hb_err=0x" << std::hex << err
+				<< " active_err=0x" << active_err
+				<< " disarm=0x" << disarm << std::dec;
 			log_info("test", oss.str());
 		}
 		std::this_thread::sleep_for(std::chrono::milliseconds(20));
 	}
 	motor.stop();
-	// Final blocking sample for the summary line.
 	vel_sample = motor.status().velocity_turns_s;
 	motor.read_axis_state(err, state);
 	const float delta = motor.read_position_turns() - pos_before;
 	std::cout << "Encoder delta: " << delta << " turns"
 		<< " (cmds=" << cmds
 		<< ", sample vel " << vel_sample
-		<< ", axis_state=" << state << ", err=0x" << std::hex << err
-		<< std::dec << ")\n";
+		<< ", iq_sp=" << iq_sp << ", iq_meas=" << iq_meas
+		<< ", axis_state=" << state
+		<< ", hb_err=0x" << std::hex << err
+		<< ", active_err=0x" << active_err
+		<< ", disarm=0x" << disarm << std::dec << ")\n";
 	return delta;
 }
 

@@ -30,6 +30,11 @@ public:
 	bool send_estop();
 	bool clear_errors();
 	bool check_heartbeat() const;
+	// Cyclic if enabled in ODrive CAN config; timeout_ms=0 = non-blocking peek.
+	bool get_iq(float& iq_setpoint, float& iq_measured, int timeout_ms = 0) const;
+	// Active_Errors + Disarm_Reason (0x003) — often explains "state=8 but no motion".
+	bool get_active_errors(uint32_t& active_errors, uint32_t& disarm_reason,
+		int timeout_ms = 0) const;
 	// ODrive autobaud stays silent until it sees host traffic — beacon then wait
 	// for cyclic Heartbeat (returns false if still quiet after timeout_ms).
 	bool wake_autobaud(int timeout_ms = 3000);
@@ -43,6 +48,8 @@ public:
 	// Motor + encoder calibration (axis will move). Blocks until IDLE or timeout.
 	bool run_full_calibration(int timeout_ms = 60000);
 	bool enter_velocity_mode(int timeout_ms = 10000);
+	// Re-send VELOCITY+PASSTHROUGH and Set_Limits without leaving closed loop.
+	bool refresh_velocity_limits();
 
 	uint8_t node_id() const { return cfg_.node_id; }
 

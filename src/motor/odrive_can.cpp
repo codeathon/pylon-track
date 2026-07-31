@@ -22,11 +22,13 @@ namespace {
 // ODrive CANSimple command IDs (see ODrive CAN protocol docs).
 constexpr uint16_t CMD_HEARTBEAT = 0x001;
 constexpr uint16_t CMD_ESTOP = 0x002;
+constexpr uint16_t CMD_GET_ERROR = 0x003;
 constexpr uint16_t CMD_GET_ENCODER_ESTIMATES = 0x009;
 constexpr uint16_t CMD_SET_AXIS_STATE = 0x007;
 constexpr uint16_t CMD_SET_CONTROLLER_MODE = 0x00b;
 constexpr uint16_t CMD_SET_INPUT_VEL = 0x00d;
 constexpr uint16_t CMD_SET_LIMITS = 0x00f;
+constexpr uint16_t CMD_GET_IQ = 0x014;
 constexpr uint16_t CMD_CLEAR_ERRORS = 0x018;
 
 constexpr uint32_t AXIS_STATE_IDLE = 1;
@@ -294,10 +296,34 @@ bool ODriveCan::check_heartbeat() const {
 
 bool ODriveCan::set_axis_state(uint32_t requested_state) {
 	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
-	uint8_t buf[8] = {};
+	// Official CANSimple examples use DLC=4 for Axis_Requested_State.
+	uint8_t buf[4] = {};
 	std::memcpy(buf, &requested_state, sizeof(uint32_t));
-	// Pad to 8 bytes — Host→ODrive reserved fields must be zero.
 	return send_frame(CMD_SET_AXIS_STATE, buf, sizeof(buf));
+}
+
+bool ODriveCan::get_iq(float& iq_setpoint, float& iq_measured, int timeout_ms) const {
+	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
+	uint8_t buf[8] = {};
+	if (!recv_frame(CMD_GET_IQ, buf, sizeof(buf), timeout_ms)) {
+		return false;
+	}
+	unpack_float_le(buf, iq_setpoint);
+	unpack_float_le(buf + 4, iq_measured);
+	return true;
+}
+
+bool ODriveCan::get_active_errors(uint32_t& active_errors, uint32_t& disarm_reason,
+	int timeout_ms) const
+{
+	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
+	uint8_t buf[8] = {};
+	if (!recv_frame(CMD_GET_ERROR, buf, sizeof(buf), timeout_ms)) {
+		return false;
+	}
+	std::memcpy(&active_errors, buf, sizeof(uint32_t));
+	std::memcpy(&disarm_reason, buf + 4, sizeof(uint32_t));
+	return true;
 }
 
 bool ODriveCan::set_controller_mode(uint32_t control_mode, uint32_t input_mode) {
@@ -412,6 +438,14 @@ void ODriveCan::flush_rx() const {
 			break;
 		}
 	}
+}
+
+bool ODriveCan::refresh_velocity_limits() {
+	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
+	if (!set_controller_mode(CONTROL_MODE_VELOCITY_CONTROL, INPUT_MODE_PASSTHROUGH)) {
+		return false;
+	}
+	return set_limits(kDefaultVelLimitTurnsS, kDefaultCurrentLimitA);
 }
 
 bool ODriveCan::enter_velocity_mode(int timeout_ms) {
