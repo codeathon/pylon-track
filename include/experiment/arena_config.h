@@ -3,10 +3,12 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include "motor/lab_motion_limits.h"
 #include "motor/shuttle_motor.h"
 #include "vision/arena_mask.h"
 
 // Chase policy gains for Phase 1; loaded early so config path is wired in Phase 0.
+// Distance/speed floors match LabMotionLimits (see include/motor/lab_motion_limits.h).
 struct ChasePolicyConfig {
 	// Lab floor ~1.0 m/s (1.5 turns/s); below this Set_Input_Vel does not move.
 	float min_chain_speed_mps = 1.0f;
@@ -16,14 +18,14 @@ struct ChasePolicyConfig {
 	float creep_distance_mm = 2000.0f;
 	// Planned flee bursts (MotionPlanner) when threat exceeds threshold.
 	float flee_threat_threshold = 0.35f;
-	// Short flees die in spin-up (~1.2 s); keep bursts long enough to travel.
-	float min_flee_mm = 200.0f;
+	// Conservative vs LabMotionLimits::kShortestReliableBurstMm (80 mm isolated).
+	float min_flee_mm = LabMotionLimits::kChaseMinFleeMm;
 	float max_flee_mm = 600.0f;
 	float flee_gap_gain = 0.25f;   // fraction of current ferret–prey gap
 	float flee_speed_gain = 0.15f; // seconds of closing-speed look-ahead
-	float flee_accel_mps2 = 50.0f;
-	// After a flee completes, re-arm hunt events while threat stays high.
-	int hunt_event_min_interval_ms = 1500;
+	float flee_accel_mps2 = LabMotionLimits::kFloorRampAccelMps2;
+	// Clears residual coast between flees (>> kBackToBackMinGapMs).
+	int hunt_event_min_interval_ms = LabMotionLimits::kChaseHuntIntervalMs;
 };
 
 struct MotorConfig {

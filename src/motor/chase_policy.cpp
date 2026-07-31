@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "motor/lab_motion_limits.h"
 #include "motor/motion_planner.h"
 
 namespace {
@@ -23,9 +24,6 @@ float clampf(float v, float lo, float hi) {
 	return std::max(lo, std::min(hi, v));
 }
 
-// Lab spin-up before distance accumulates (matches MotionPlanner runtime).
-constexpr float kFleeSpinupS = 1.2f;
-
 // Build a flee plan the motor can execute: checklist for feasibility, then
 // runtime profile (floor speed + spin-up lead-in) for start_plan/tick.
 ChainMovePlan plan_feasible_flee(float flee_mm, float speed_mps, float accel_mps2,
@@ -35,9 +33,11 @@ ChainMovePlan plan_feasible_flee(float flee_mm, float speed_mps, float accel_mps
 	const float speed_mmps = speed_abs * 1000.0f;
 	float dist = flee_mm;
 	int duration_ms = static_cast<int>(std::lround(
-		(kFleeSpinupS + std::fabs(dist) / speed_mmps) * 1000.0f));
+		(LabMotionLimits::kSpinupLeadInS + std::fabs(dist) / speed_mmps)
+		* 1000.0f));
+	// Never arm a flee shorter than spin-up + margin (~1.5 s).
 	if (duration_ms < 1500) {
-		duration_ms = 1500; // never arm a flee shorter than spin-up + margin
+		duration_ms = 1500;
 	}
 
 	for (int attempt = 0; attempt < 8; ++attempt) {
