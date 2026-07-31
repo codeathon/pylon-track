@@ -19,8 +19,8 @@ constexpr float kTwoPi = 6.283185307f;
 constexpr uint32_t kAxisStateClosedLoop = 8;
 
 // Keep Set_Input_Vel alive for duration_s; returns last sample vel and axis
-// state. Checks `running` (may be null) every 100ms so Ctrl-C stops the
-// motor immediately instead of riding out the full spin duration.
+// state. Command ~50 Hz; do not block on encoder/heartbeat every tick (that
+// collapsed short spins to a single Set_Input_Vel). Poll `running` each tick.
 bool spin_velocity(PreyMotor& motor, float turns_s, float duration_s,
 	float& vel_sample, uint32_t& last_err, uint32_t& last_state,
 	std::atomic<bool>* running)
@@ -30,6 +30,7 @@ bool spin_velocity(PreyMotor& motor, float turns_s, float duration_s,
 	last_state = 0;
 	const auto spin_end = std::chrono::steady_clock::now()
 		+ std::chrono::milliseconds(static_cast<int>(duration_s * 1000.0f));
+	int cmds = 0;
 	while (std::chrono::steady_clock::now() < spin_end) {
 		if (running && !running->load()) {
 			log_error("setup", "Test spin interrupted — motor stopped");
@@ -41,11 +42,19 @@ bool spin_velocity(PreyMotor& motor, float turns_s, float duration_s,
 			motor.set_velocity_turns_s(0.0f);
 			return false;
 		}
-		vel_sample = motor.status().velocity_turns_s;
-		motor.read_axis_state(last_err, last_state);
-		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		++cmds;
+		float peek = 0.0f;
+		if (motor.try_sample_velocity_turns_s(peek, /*timeout_ms=*/0)) {
+			vel_sample = peek;
+		}
+		if (cmds == 1 || cmds % 10 == 0) {
+			motor.read_axis_state(last_err, last_state);
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(20));
 	}
 	motor.set_velocity_turns_s(0.0f);
+	vel_sample = motor.status().velocity_turns_s;
+	motor.read_axis_state(last_err, last_state);
 	return true;
 }
 

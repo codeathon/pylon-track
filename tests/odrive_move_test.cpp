@@ -78,6 +78,11 @@ struct Args {
 
 // Shared spin loop for --vel-turns-s and default distance mode.
 // Returns encoder delta (turns). Prints mid-move vel / axis_state / err.
+//
+// Why: the old loop called blocking status()+heartbeat every tick (~200–400 ms)
+// then slept 100 ms — a 0.5 s window only got ~1 Set_Input_Vel before stop(),
+// so encoder delta stayed ~0 even though axis_state=8 / err=0. Keep commanding
+// at ~50 Hz; sample feedback without blocking the cadence.
 float spin_turns_s_for(PreyMotor& motor, float turns_s, float seconds) {
 	const float pos_before = motor.read_position_turns();
 	const auto end = std::chrono::steady_clock::now()
@@ -93,10 +98,13 @@ float spin_turns_s_for(PreyMotor& motor, float turns_s, float seconds) {
 			return motor.read_position_turns() - pos_before;
 		}
 		++cmds;
-		// Sample feedback like the known-good raw path (also feeds diagnostics).
-		vel_sample = motor.status().velocity_turns_s;
-		motor.read_axis_state(err, state);
-		if (cmds <= 3 || cmds % 5 == 0) {
+		// Non-blocking encoder peek; heartbeat only every ~200 ms.
+		float peek = 0.0f;
+		if (motor.try_sample_velocity_turns_s(peek, /*timeout_ms=*/0)) {
+			vel_sample = peek;
+		}
+		if (cmds == 1 || cmds % 10 == 0) {
+			motor.read_axis_state(err, state);
 			std::ostringstream oss;
 			oss << "spin cmd#" << cmds
 				<< " cmd=" << turns_s
@@ -105,9 +113,12 @@ float spin_turns_s_for(PreyMotor& motor, float turns_s, float seconds) {
 				<< " err=0x" << std::hex << err << std::dec;
 			log_info("test", oss.str());
 		}
-		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		std::this_thread::sleep_for(std::chrono::milliseconds(20));
 	}
 	motor.stop();
+	// Final blocking sample for the summary line.
+	vel_sample = motor.status().velocity_turns_s;
+	motor.read_axis_state(err, state);
 	const float delta = motor.read_position_turns() - pos_before;
 	std::cout << "Encoder delta: " << delta << " turns"
 		<< " (cmds=" << cmds
