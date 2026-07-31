@@ -84,6 +84,7 @@ uint16_t ODriveCan::can_id(uint16_t cmd_id, uint8_t node_id) {
 }
 
 bool ODriveCan::open() {
+	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
 	if (socket_fd_ >= 0) {
 		return true;
 	}
@@ -110,11 +111,25 @@ bool ODriveCan::open() {
 		return false;
 	}
 
+	// Restrict the socket to frames addressed to this node (any cmd_id) —
+	// without this every frame on the bus (other axes' heartbeats, etc.) is
+	// delivered here too, which recv_frame would otherwise have to wade through.
+	// Arbitration ID layout is (node_id << 5) | cmd_id (see can_id() below), so
+	// the node_id field lives in bits 5-10, not the low 5 bits — mask/match
+	// only that range and let cmd_id (bits 0-4) be anything.
+	can_filter filter{};
+	filter.can_id = static_cast<canid_t>(cfg_.node_id) << 5;
+	filter.can_mask = 0x3Fu << 5;
+	if (setsockopt(socket_fd_, SOL_CAN_RAW, CAN_RAW_FILTER, &filter, sizeof(filter)) < 0) {
+		log_error("motor", "CAN filter setup failed on " + cfg_.interface + " (continuing unfiltered)");
+	}
+
 	log_info("motor", "CAN open on " + cfg_.interface + " node " + std::to_string(cfg_.node_id));
 	return true;
 }
 
 void ODriveCan::close() {
+	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
 	if (socket_fd_ >= 0) {
 		::close(socket_fd_);
 		socket_fd_ = -1;
@@ -140,6 +155,7 @@ bool ODriveCan::send_frame(uint16_t cmd_id, const void* data, uint8_t len) const
 }
 
 bool ODriveCan::wake_autobaud(int timeout_ms) {
+	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
 	if (socket_fd_ < 0) {
 		return false;
 	}
@@ -217,6 +233,7 @@ bool ODriveCan::recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len
 }
 
 bool ODriveCan::get_encoder_estimates(float& pos_turns, float& vel_turns_s) const {
+	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
 	// Cyclic by default (~10 ms); listen rather than request.
 	uint8_t buf[8] = {};
 	if (!recv_frame(CMD_GET_ENCODER_ESTIMATES, buf, sizeof(buf))) {
@@ -228,6 +245,7 @@ bool ODriveCan::get_encoder_estimates(float& pos_turns, float& vel_turns_s) cons
 }
 
 bool ODriveCan::set_input_velocity(float turns_s, float torque_ff) {
+	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
 	uint8_t buf[8] = {};
 	pack_float_le(turns_s, buf);
 	pack_float_le(torque_ff, buf + 4);
@@ -235,6 +253,7 @@ bool ODriveCan::set_input_velocity(float turns_s, float torque_ff) {
 }
 
 bool ODriveCan::set_limits(float velocity_limit_turns_s, float current_limit_a) {
+	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
 	uint8_t buf[8] = {};
 	pack_float_le(velocity_limit_turns_s, buf);
 	pack_float_le(current_limit_a, buf + 4);
@@ -242,22 +261,26 @@ bool ODriveCan::set_limits(float velocity_limit_turns_s, float current_limit_a) 
 }
 
 bool ODriveCan::send_estop() {
+	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
 	return send_frame(CMD_ESTOP, nullptr, 0);
 }
 
 bool ODriveCan::clear_errors() {
+	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
 	// Identify=0: clear only (do not blink status LED).
 	const uint8_t identify = 0;
 	return send_frame(CMD_CLEAR_ERRORS, &identify, 1);
 }
 
 bool ODriveCan::check_heartbeat() const {
+	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
 	// Heartbeat is cyclic (~100 ms) from the drive — do not TX a fake request.
 	uint8_t buf[8] = {};
 	return recv_frame(CMD_HEARTBEAT, buf, sizeof(buf));
 }
 
 bool ODriveCan::set_axis_state(uint32_t requested_state) {
+	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
 	uint8_t buf[8] = {};
 	std::memcpy(buf, &requested_state, sizeof(uint32_t));
 	// Pad to 8 bytes — Host→ODrive reserved fields must be zero.
@@ -265,6 +288,7 @@ bool ODriveCan::set_axis_state(uint32_t requested_state) {
 }
 
 bool ODriveCan::set_controller_mode(uint32_t control_mode, uint32_t input_mode) {
+	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
 	uint8_t buf[8] = {};
 	std::memcpy(buf, &control_mode, sizeof(uint32_t));
 	std::memcpy(buf + 4, &input_mode, sizeof(uint32_t));
@@ -274,12 +298,16 @@ bool ODriveCan::set_controller_mode(uint32_t control_mode, uint32_t input_mode) 
 bool ODriveCan::get_heartbeat(uint32_t& axis_error, uint32_t& axis_state,
 	uint8_t& procedure_result) const
 {
+	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
 	uint8_t buf[8] = {};
 	if (!recv_frame(CMD_HEARTBEAT, buf, sizeof(buf))) {
 		return false;
 	}
+	// CANSimple Heartbeat layout: Axis_Error is the full 4-byte word at
+	// offset 0; Axis_State is a single byte at offset 4, Procedure_Result at
+	// offset 5 — reading axis_state as 4 bytes previously pulled those in as
+	// garbage high bits.
 	std::memcpy(&axis_error, buf, sizeof(uint32_t));
-	// Heartbeat: Axis_Error u32, Axis_State u8, Procedure_Result u8, ...
 	axis_state = buf[4];
 	procedure_result = buf[5];
 	return true;
@@ -291,6 +319,7 @@ bool ODriveCan::get_axis_state(uint32_t& axis_error, uint32_t& axis_state) const
 }
 
 bool ODriveCan::run_full_calibration(int timeout_ms) {
+	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
 	clear_errors();
 	if (!set_axis_state(AXIS_STATE_IDLE)) {
 		log_error("motor", "Set axis IDLE failed before calibration");
@@ -373,6 +402,7 @@ void ODriveCan::flush_rx() const {
 }
 
 bool ODriveCan::enter_velocity_mode(int timeout_ms) {
+	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
 	// Position-hold from a prior run looks like state=8 with Set_Input_Vel ignored.
 	// Force IDLE, apply velocity mode + limits, then re-enter closed loop.
 	clear_errors();

@@ -118,6 +118,12 @@ int main(int argc, char** argv) {
 		logger.set_log_file(cli.log_file);
 	}
 
+	// Installed before either path runs — setup's live hardware tests
+	// (ODrive test spin, LabJack shuttle wobble) also need to react to
+	// Ctrl-C and stop the motor, not just the run/chase path.
+	std::signal(SIGINT, signal_handler);
+	std::signal(SIGTERM, signal_handler);
+
 	if (cli.command == Command::Setup) {
 		if (cli.enable_display && std::getenv("DISPLAY") == nullptr) {
 			log_error("main", "--display requires DISPLAY");
@@ -131,6 +137,7 @@ int main(int argc, char** argv) {
 		opts.verbose = cli.verbose;
 		opts.skip_interactive = cli.skip_interactive;
 		opts.display = cli.enable_display;
+		opts.running = &g_running;
 		opts.spin_seconds = cli.spin_seconds;
 		if (!cli.only_step.empty()) {
 			opts.only = parse_setup_step(cli.only_step);
@@ -138,9 +145,6 @@ int main(int argc, char** argv) {
 		SetupRunner runner(std::move(opts));
 		return runner.run();
 	}
-
-	std::signal(SIGINT, signal_handler);
-	std::signal(SIGTERM, signal_handler);
 
 	if (cli.enable_display && std::getenv("DISPLAY") == nullptr) {
 		log_error("main", "--display requires DISPLAY");

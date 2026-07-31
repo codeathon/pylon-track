@@ -73,3 +73,27 @@ foreach(suite param_sweep latency_suite mount_height_suite one_time_suite teleme
 		BUILD_RPATH   "${PYLON_ROOT}/lib"
 	)
 endforeach()
+
+# Motor-only distance/duration move test — no camera, Pylon, or LabJack
+# linkage needed. Deliberately does NOT link arena_motor (that bundles
+# ShuttleMotor/LabjackHBridge/chase_policy/chase_controller too) — this test
+# only ever touches PreyMotor/ODriveCan/MotionPlanner, so it links exactly
+# those sources instead of the LabJack-coupled shared lib.
+add_executable(test_distance_moving
+	distance_moving_suite.cpp
+	${CMAKE_SOURCE_DIR}/src/motor/odrive_can.cpp
+	${CMAKE_SOURCE_DIR}/src/motor/prey_motor.cpp
+	${CMAKE_SOURCE_DIR}/src/motor/motion_planner.cpp
+	${CMAKE_SOURCE_DIR}/src/experiment/arena_config.cpp
+	${CMAKE_SOURCE_DIR}/src/calibrate/setup_util.cpp
+	${CMAKE_SOURCE_DIR}/src/log/logger.cpp
+)
+target_include_directories(test_distance_moving PRIVATE
+	${CMAKE_SOURCE_DIR}/include
+	${OpenCV_INCLUDE_DIRS}
+)
+target_link_libraries(test_distance_moving PRIVATE
+	${OpenCV_LIBS}
+	nlohmann_json::nlohmann_json
+	pthread
+)

@@ -28,4 +28,8 @@ private:
 	std::vector<PolygonRegion> ignore_regions_;
 	std::vector<cv::Point> track_roi_;
 	bool has_track_roi_ = false;
+	// Built once (track_roi_ and the frame size are both fixed after
+	// construction) and reused, instead of a fresh allocation + fillPoly
+	// rasterization every apply() call in the ~200fps grab callback.
+	mutable cv::Mat roi_mask_;
 };

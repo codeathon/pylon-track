@@ -11,6 +11,9 @@
 #include <filesystem>
 #include <cmath>
 
+#include <poll.h>
+#include <unistd.h>
+
 #include "camera/camera_config.h"
 #include "camera/camera_settings.h"
 #include "camera/camera_calib.h"
@@ -120,8 +123,21 @@ static std::string resolve_experiment_config_path(const char* argv0,
 	return {};
 }
 
+// std::cin >> key blocks with no way to interrupt it, so poll stdin with a
+// short timeout first — lets the loop keep rechecking g_running instead of
+// hanging the shutdown join() when the operator isn't actively typing.
+static bool stdin_ready(int timeout_ms) {
+	pollfd pfd{};
+	pfd.fd = STDIN_FILENO;
+	pfd.events = POLLIN;
+	return poll(&pfd, 1, timeout_ms) > 0;
+}
+
 static void operator_input_thread(TrialStateMachine* fsm, SessionRecorder* recorder) {
 	while (g_running.load()) {
+		if (!stdin_ready(100)) {
+			continue; // timed out — recheck g_running
+		}
 		char key = 0;
 		if (!(std::cin >> key)) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -290,25 +306,35 @@ int main(int argc, char** argv) {
 				continue;
 			}
 
-			if (!tracker.ferret.valid || !tracker.prey.valid) {
+			// get_tracking_frame() is the thread-safe snapshot (mutex-guarded
+			// in CameraTrackingService::OnImageGrabbed) — the raw ferret/prey
+			// public members are written unlocked from the Pylon grab thread
+			// and reading them directly here would be a data race.
+			TrackingFrame frame;
+			if (!tracker.get_tracking_frame(frame)) {
+				continue;
+			}
+			const TrackState& ferret = frame.ferret.state;
+			const TrackState& prey = frame.prey.state;
+			if (!ferret.valid || !prey.valid) {
 				continue;
 			}
 
 			// Telemetry: raw stdout without logger prefix for piping/scripts.
-			const float dx = tracker.ferret.pos_mm.x - tracker.prey.pos_mm.x;
-			const float dy = tracker.ferret.pos_mm.y - tracker.prey.pos_mm.y;
+			const float dx = ferret.pos_mm.x - prey.pos_mm.x;
+			const float dy = ferret.pos_mm.y - prey.pos_mm.y;
 			const float distance_mm = std::sqrt(dx * dx + dy * dy);
 
 			std::printf(
 				"Ferret: (%.0f, %.0f)mm  %.0fmm/s  %.0fdeg  |  "
 				"Prey: (%.0f, %.0f)mm  %.0fmm/s  %.0fdeg  |  "
 				"Dist: %.0fmm\n",
-				tracker.ferret.pos_mm.x, tracker.ferret.pos_mm.y,
-				tracker.ferret.speed_mm_s,
-				tracker.ferret.direction_deg,
-				tracker.prey.pos_mm.x, tracker.prey.pos_mm.y,
-				tracker.prey.speed_mm_s,
-				tracker.prey.direction_deg,
+				ferret.pos_mm.x, ferret.pos_mm.y,
+				ferret.speed_mm_s,
+				ferret.direction_deg,
+				prey.pos_mm.x, prey.pos_mm.y,
+				prey.speed_mm_s,
+				prey.direction_deg,
 				distance_mm);
 		}
 

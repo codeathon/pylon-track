@@ -8,15 +8,19 @@
 		"prey_area_px_max": 15000,
 		"max_compactness": 0.35
 	},
-	"trap_door": {
+	"shuttle": {
 		"backend": "noop",
-		"open_hold_ms": 500,
+		"wobble_leg_ms": 300,
+		"end_pulse_ms": 1000,
+		"hallway_high_turns": 15.0,
+		"hallway_low_turns": 5.0,
 		"labjack": {
 			"device_type": "T7",
 			"connection": "ANY",
 			"identifier": "ANY",
-			"dio_pin": "FIO0",
-			"active_high": true
+			"pin_a": "FIO4",
+			"pin_b": "FIO5",
+			"high_voltage": 5.0
 		}
 	},
 	"motor": {
@@ -24,7 +28,7 @@
 		"node_id": 62,
 		"pulley_radius_m": 0.025,
 		"chain_direction_sign": 1,
-		"chain_mm_per_motor_turn": 157.0
+		"chain_mm_per_motor_turn": 660.4
 	},
 	"chase_policy": {
 		"min_chain_speed_mps": 0.05,

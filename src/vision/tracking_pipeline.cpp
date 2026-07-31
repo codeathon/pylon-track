@@ -5,6 +5,13 @@
 #include "log/logger.h"
 #include "tracker/tracker.h"
 
+namespace {
+// ~0.15s at 200fps — long enough to ride out a pulley/ignore-region
+// occlusion, short enough that a genuinely-gone animal stops being
+// reported as "valid" instead of coasting on a stale prediction forever.
+constexpr int kMaxCoastFrames = 30;
+} // namespace
+
 TrackingPipeline::TrackingPipeline(int warmup_frames, float gsd_mm_px, float fps,
 	std::optional<CameraCalib> calib, std::optional<ArenaMaskConfig> mask_cfg,
 	std::optional<VisionConfig> vision_cfg)
@@ -51,6 +58,22 @@ void TrackingPipeline::update_track(cv::KalmanFilter& kf,
 	state.valid = true;
 }
 
+void TrackingPipeline::coast_track(cv::KalmanFilter& kf, const TrackState& prior,
+	TrackState& state, int miss_streak, int max_miss_frames)
+{
+	if (!prior.valid || miss_streak > max_miss_frames) {
+		return; // stays invalid — nothing plausible to coast from
+	}
+	cv::Mat pred = kf.predict();
+	const float vx_px = pred.at<float>(2);
+	const float vy_px = pred.at<float>(3);
+	state.pos_px = {pred.at<float>(0), pred.at<float>(1)};
+	state.pos_mm = state.pos_px * gsd_mm_px_;
+	state.speed_mm_s = std::sqrt(vx_px * vx_px + vy_px * vy_px) * fps_ * gsd_mm_px_;
+	state.direction_deg = std::atan2(-vy_px, vx_px) * 180.0f / static_cast<float>(M_PI);
+	state.valid = true;
+}
+
 TrackingProcessOutput TrackingPipeline::process(const CameraFrame& input,
 	TrialPhase trial_phase)
 {
@@ -75,13 +98,12 @@ TrackingProcessOutput TrackingPipeline::process(const CameraFrame& input,
 	out.display_frame = frame;
 
 	const double lr = out.frame.warmup ? 0.01 : 0.002;
-	cv::Mat mask;
-	bg_->apply(frame, mask, lr);
-	cv::morphologyEx(mask, mask, cv::MORPH_OPEN, morph_kernel_);
-	arena_mask_.apply(mask);
+	bg_->apply(frame, mask_, lr);
+	cv::morphologyEx(mask_, mask_, cv::MORPH_OPEN, morph_kernel_);
+	arena_mask_.apply(mask_);
 
 	std::vector<std::vector<cv::Point>> contours;
-	cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+	cv::findContours(mask_, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 	contours.erase(
 		std::remove_if(contours.begin(), contours.end(), [](const auto& c) {
 			const float a = static_cast<float>(cv::contourArea(c));
@@ -100,24 +122,31 @@ TrackingProcessOutput TrackingPipeline::process(const CameraFrame& input,
 	out.frame.quality.prey_confidence = assoc.prey_confidence;
 	out.frame.quality.reject_reason = assoc.reject_reason;
 
+	// Every frame with no matching detection still calls predict() (via
+	// coast_track) so the filter's internal state keeps advancing with real
+	// time. Without this, a multi-frame gap (occlusion, a rejected/noisy
+	// contour, a merge) left the filter frozen — the next successful
+	// correct() then modeled only 1/fps of motion against a measurement
+	// that actually moved several frames' worth of distance, producing a
+	// large bogus speed/direction spike on reacquisition.
 	if (assoc.ferret_idx >= 0) {
 		update_track(kf_ferret_, contours[static_cast<size_t>(assoc.ferret_idx)], ferret);
+		ferret_miss_streak_ = 0;
+	} else {
+		++ferret_miss_streak_;
+		coast_track(kf_ferret_, ferret_prior_, ferret, ferret_miss_streak_, kMaxCoastFrames);
+		if (ferret.valid) {
+			out.frame.quality.ferret_confidence *= 0.5f;
+		}
 	}
+
 	if (assoc.prey_idx >= 0) {
 		update_track(kf_prey_, contours[static_cast<size_t>(assoc.prey_idx)], prey);
-	} else if (assoc.ferret_idx >= 0 && ferret.valid) {
-		// Occlusion: ferret visible alone — coast prey on Kalman prediction.
-		const float merged_area = static_cast<float>(
-			cv::contourArea(contours[static_cast<size_t>(assoc.ferret_idx)]));
-		if (merged_area > 15000.0f && prey_prior_.valid) {
-			cv::Mat pred = kf_prey_.predict();
-			prey.pos_px = {pred.at<float>(0), pred.at<float>(1)};
-			prey.pos_mm = prey.pos_px * gsd_mm_px_;
-			prey.speed_mm_s = std::sqrt(std::pow(pred.at<float>(2), 2)
-				+ std::pow(pred.at<float>(3), 2)) * fps_ * gsd_mm_px_;
-			prey.direction_deg = std::atan2(-pred.at<float>(3), pred.at<float>(2))
-				* 180.0f / static_cast<float>(M_PI);
-			prey.valid = true;
+		prey_miss_streak_ = 0;
+	} else {
+		++prey_miss_streak_;
+		coast_track(kf_prey_, prey_prior_, prey, prey_miss_streak_, kMaxCoastFrames);
+		if (prey.valid) {
 			out.frame.quality.prey_confidence *= 0.5f;
 		}
 	}

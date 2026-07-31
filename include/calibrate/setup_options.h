@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <string>
 
 // Which one-time setup step to run (All = bundled default).
@@ -23,6 +24,10 @@ struct SetupOptions {
 	bool skip_interactive = false;
 	bool display = false;
 	SetupStep only = SetupStep::All;
+	// Set by the caller (points at main's g_running) so live-hardware test
+	// steps (ODrive test spin, LabJack shuttle wobble) can stop the motor
+	// promptly on Ctrl-C instead of riding out a blind sleep. May be null.
+	std::atomic<bool>* running = nullptr;
 	// ODrive setup test-spin duration (seconds).
 	float spin_seconds = 10.0f;
 };

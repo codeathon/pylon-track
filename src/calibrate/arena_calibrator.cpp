@@ -146,7 +146,11 @@ bool ArenaCalibrator::run(const std::string& config_path, ArenaExperimentConfig&
 				}
 			}
 			if (key == 's') {
-				save_arena_vision_masks(config_path, cfg.vision.mask);
+				if (!save_arena_vision_masks(config_path, cfg.vision.mask)) {
+					log_error("setup", "Save failed — arena mask edits are NOT persisted");
+				} else {
+					ui.dirty = false;
+				}
 			}
 		}
 		camera.StopGrabbing();
@@ -154,6 +158,12 @@ bool ArenaCalibrator::run(const std::string& config_path, ArenaExperimentConfig&
 		cv::destroyWindow("arena_setup");
 	} catch (const GenericException& e) {
 		log_error("setup", std::string("Arena setup camera error: ") + e.GetDescription());
+		ok = false;
+	} catch (const cv::Exception& e) {
+		// OpenCV calls (imshow, polylines, ...) run inside the same loop and
+		// throw this, not GenericException — uncaught here it skipped
+		// PylonTerminate() and aborted the rest of the setup sequence.
+		log_error("setup", std::string("Arena setup OpenCV error: ") + e.what());
 		ok = false;
 	}
 	PylonTerminate();

@@ -54,8 +54,8 @@ set(MOTOR_SOURCES
 	src/motor/odrive_can.cpp
 	src/motor/prey_motor.cpp
 	src/motor/motion_planner.cpp
-	src/motor/labjack_io.cpp
-	src/motor/trap_door_motor.cpp
+	src/motor/labjack_hbridge.cpp
+	src/motor/shuttle_motor.cpp
 	src/motor/chase_policy.cpp
 	src/motor/chase_controller.cpp
 )
@@ -70,8 +70,8 @@ set(CALIBRATE_SOURCES
 	src/calibrate/charuco_board.cpp
 )
 
-# ── Optional LabJack LJM (trap door DIO) ─────────────────────────────────────
-option(ENABLE_LABJACK "Link LabJack LJM for trap door control" ON)
+# ── Optional LabJack LJM (shuttle motor H-bridge DIO) ────────────────────────
+option(ENABLE_LABJACK "Link LabJack LJM for shuttle motor control" ON)
 set(LJM_ROOT "/usr/local/lib" CACHE PATH "LabJack LJM library directory")
 
 # ── Compiler flags ────────────────────────────────────────────────────────────
@@ -223,7 +223,7 @@ if(UNIX)
 			target_link_libraries(arena_motor PUBLIC ${LJM_LIBRARY})
 			message(STATUS "LabJack LJM   : ${LJM_LIBRARY}")
 		else()
-			message(STATUS "LabJack LJM   : not found — trap door LabJack backend stubbed")
+			message(STATUS "LabJack LJM   : not found — shuttle motor LabJack backend stubbed")
 		endif()
 	endif()
 

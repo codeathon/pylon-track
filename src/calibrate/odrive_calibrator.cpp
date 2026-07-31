@@ -1,8 +1,10 @@
 #include "calibrate/odrive_calibrator.h"
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <iostream>
+#include <optional>
 #include <thread>
 
 #include "calibrate/setup_util.h"
@@ -16,9 +18,12 @@ constexpr float kTestTurnsPerS = 1.0f;
 constexpr float kTwoPi = 6.283185307f;
 constexpr uint32_t kAxisStateClosedLoop = 8;
 
-// Keep Set_Input_Vel alive for duration_s; returns last sample vel and axis state.
+// Keep Set_Input_Vel alive for duration_s; returns last sample vel and axis
+// state. Checks `running` (may be null) every 100ms so Ctrl-C stops the
+// motor immediately instead of riding out the full spin duration.
 bool spin_velocity(PreyMotor& motor, float turns_s, float duration_s,
-	float& vel_sample, uint32_t& last_err, uint32_t& last_state)
+	float& vel_sample, uint32_t& last_err, uint32_t& last_state,
+	std::atomic<bool>* running)
 {
 	vel_sample = 0.0f;
 	last_err = 0;
@@ -26,6 +31,11 @@ bool spin_velocity(PreyMotor& motor, float turns_s, float duration_s,
 	const auto spin_end = std::chrono::steady_clock::now()
 		+ std::chrono::milliseconds(static_cast<int>(duration_s * 1000.0f));
 	while (std::chrono::steady_clock::now() < spin_end) {
+		if (running && !running->load()) {
+			log_error("setup", "Test spin interrupted — motor stopped");
+			motor.set_velocity_turns_s(0.0f);
+			return false;
+		}
 		if (!motor.set_velocity_turns_s(turns_s)) {
 			log_error("setup", "Set_Input_Vel failed during test spin");
 			motor.set_velocity_turns_s(0.0f);
@@ -63,14 +73,27 @@ bool ODriveCalibrator::run(const std::string& config_path, ArenaExperimentConfig
 	if (sign != -1 && sign != 1) {
 		sign = 1;
 	}
+	// Persist the sanitized value now so --skip-interactive runs never write
+	// back the original invalid sign; the interactive jog below can still
+	// refine it from the operator's confirmation.
+	cfg.motor.chain_direction_sign = sign;
 
 	// Closed-loop with err=0 but no motion usually means motor/encoder were never
 	// calibrated (or marked pre_calibrated incorrectly). Offer CAN calibration first.
 	if (!opts_.skip_interactive) {
 		std::cout << "\nIf the motor has not been calibrated on this ODrive, run "
 			"full calibration now (shaft will twitch/spin).\n";
-		if (prompt_yes_no("Run ODrive full calibration over CAN? [y/n]: ")) {
-			prompt_enter("Clear the chain path, then press Enter to calibrate...");
+		const std::optional<bool> run_calib =
+			prompt_yes_no("Run ODrive full calibration over CAN? [y/n]: ");
+		if (!run_calib) {
+			log_error("setup", "No input received (stdin closed) — aborting calibration");
+			return false;
+		}
+		if (*run_calib) {
+			if (!prompt_enter("Clear the chain path, then press Enter to calibrate...")) {
+				log_error("setup", "No input received (stdin closed) — aborting calibration");
+				return false;
+			}
 			if (!motor.run_full_calibration()) {
 				log_error("setup", "ODrive full calibration failed");
 				return false;
@@ -88,7 +111,10 @@ bool ODriveCalibrator::run(const std::string& config_path, ArenaExperimentConfig
 	if (!opts_.skip_interactive) {
 		std::cout << "\nTest spin: " << cmd_turns_s << " turns/s for "
 			<< spin_s << "s\nKeep hands clear of the chain.\n";
-		prompt_enter("Press Enter to arm motor and start test spin...");
+		if (!prompt_enter("Press Enter to arm motor and start test spin...")) {
+			log_error("setup", "No input received (stdin closed) — aborting calibration");
+			return false;
+		}
 	}
 
 	if (!motor.enter_velocity_mode()) {
@@ -100,7 +126,8 @@ bool ODriveCalibrator::run(const std::string& config_path, ArenaExperimentConfig
 	float vel_sample = 0.0f;
 	uint32_t axis_err = 0;
 	uint32_t axis_state = 0;
-	if (!spin_velocity(motor, cmd_turns_s, spin_s, vel_sample, axis_err, axis_state)) {
+	if (!spin_velocity(motor, cmd_turns_s, spin_s, vel_sample, axis_err, axis_state,
+			opts_.running)) {
 		return false;
 	}
 	std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -126,13 +153,24 @@ bool ODriveCalibrator::run(const std::string& config_path, ArenaExperimentConfig
 
 	float measured_mm = 100.0f;
 	if (!opts_.skip_interactive) {
-		if (!prompt_yes_no("Did you see the chain move during the test spin? [y/n]: ")) {
+		const std::optional<bool> saw_motion =
+			prompt_yes_no("Did you see the chain move during the test spin? [y/n]: ");
+		if (!saw_motion) {
+			log_error("setup", "No input received (stdin closed) — aborting calibration");
+			return false;
+		}
+		if (!*saw_motion) {
 			log_error("setup",
 				"No chain motion — fix mechanics/ODrive velocity control before measuring mm");
 			return false;
 		}
-		measured_mm = prompt_float(
+		const std::optional<float> answer = prompt_float(
 			"Measure chain travel during the test (mm, absolute value, e.g. 100): ");
+		if (!answer) {
+			log_error("setup", "No input received (stdin closed) — aborting calibration");
+			return false;
+		}
+		measured_mm = *answer;
 	}
 
 	cfg.motor.chain_mm_per_motor_turn = std::fabs(measured_mm / delta_turns);
@@ -151,11 +189,16 @@ bool ODriveCalibrator::run(const std::string& config_path, ArenaExperimentConfig
 		uint32_t jog_err = 0;
 		uint32_t jog_state = 0;
 		if (!spin_velocity(motor, 0.5f * static_cast<float>(sign), 0.5f,
-				jog_vel, jog_err, jog_state)) {
+				jog_vel, jog_err, jog_state, opts_.running)) {
 			return false;
 		}
-		cfg.motor.chain_direction_sign = prompt_yes_no(
-			"Did the chain move in the prey-flee direction? [y/n]: ") ? 1 : -1;
+		const std::optional<bool> confirmed = prompt_yes_no(
+			"Did the chain move in the prey-flee direction? [y/n]: ");
+		if (!confirmed) {
+			log_error("setup", "No input received (stdin closed) — aborting calibration");
+			return false;
+		}
+		cfg.motor.chain_direction_sign = *confirmed ? 1 : -1;
 	}
 
 	if (!save_motor_calibration(config_path, cfg.motor)) {

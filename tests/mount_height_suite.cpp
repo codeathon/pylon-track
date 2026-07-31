@@ -42,23 +42,28 @@ struct HeightArgs {
 };
 
 static bool parse_height_args(int argc, char** argv, HeightArgs& args) {
-	for (int i = 1; i < argc; ++i) {
-		if (std::strcmp(argv[i], "--height-cm") == 0 && i + 1 < argc) {
-			args.opts.height_cm = std::stod(argv[++i]);
-		} else if (std::strcmp(argv[i], "--duration") == 0 && i + 1 < argc) {
-			args.opts.duration_s = std::stod(argv[++i]);
-		} else if (std::strcmp(argv[i], "--warmup-secs") == 0 && i + 1 < argc) {
-			args.opts.warmup_s = std::stod(argv[++i]);
-		} else if (std::strcmp(argv[i], "--camera-config") == 0 && i + 1 < argc) {
-			args.camera_config = argv[++i];
-		} else if (std::strcmp(argv[i], "--output") == 0 && i + 1 < argc) {
-			args.output_base = argv[++i];
-		} else if (std::strcmp(argv[i], "--verbose") == 0) {
-			Logger::instance().set_level(LogLevel::Debug);
-		} else {
-			std::cerr << "Unknown argument: " << argv[i] << '\n';
-			return false;
+	try {
+		for (int i = 1; i < argc; ++i) {
+			if (std::strcmp(argv[i], "--height-cm") == 0 && i + 1 < argc) {
+				args.opts.height_cm = std::stod(argv[++i]);
+			} else if (std::strcmp(argv[i], "--duration") == 0 && i + 1 < argc) {
+				args.opts.duration_s = std::stod(argv[++i]);
+			} else if (std::strcmp(argv[i], "--warmup-secs") == 0 && i + 1 < argc) {
+				args.opts.warmup_s = std::stod(argv[++i]);
+			} else if (std::strcmp(argv[i], "--camera-config") == 0 && i + 1 < argc) {
+				args.camera_config = argv[++i];
+			} else if (std::strcmp(argv[i], "--output") == 0 && i + 1 < argc) {
+				args.output_base = argv[++i];
+			} else if (std::strcmp(argv[i], "--verbose") == 0) {
+				Logger::instance().set_level(LogLevel::Debug);
+			} else {
+				std::cerr << "Unknown argument: " << argv[i] << '\n';
+				return false;
+			}
 		}
+	} catch (const std::exception& e) {
+		std::cerr << "Invalid numeric argument: " << e.what() << '\n';
+		return false;
 	}
 	if (args.opts.height_cm <= 0.0) {
 		std::cerr << "Usage: test_mount_height --height-cm <h> "
