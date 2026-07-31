@@ -16,8 +16,14 @@ namespace {
 // whatever sprocket/chain ratio it happens to be driving.
 constexpr float kMinViableTurnsPerS = 1.5f;
 // Ramp rate used only to reach kMinViableTurnsPerS in the floor case below —
-// separate from the caller's max_accel_mps2, which that case overrides.
-constexpr float kFloorRampAccelMps2 = 2.0f;
+// separate from (and always faster than) the caller's max_accel_mps2, which
+// that case overrides. Must be fast: crawling up to the floor at a gentle
+// rate spends most of the ramp sitting in the exact low-speed range that
+// doesn't produce torque, so it can stall out before ever reaching a speed
+// that actually turns the chain. 50 m/s^2 matches the --max-accel value
+// that was confirmed on the rig to move the chain (near-instant ramp to a
+// ~1.4-1.8 m/s peak, held, before this floor logic existed).
+constexpr float kFloorRampAccelMps2 = 50.0f;
 } // namespace
 
 MotionPlanner::~MotionPlanner() {
