@@ -4,28 +4,18 @@
 #include <cmath>
 #include <thread>
 
+#include "motor/lab_motion_limits.h"
 #include "motor/prey_motor.h"
 #include "log/logger.h"
 
 namespace {
-// Below this the motor doesn't reliably produce enough torque to actually
-// turn (observed on the rig) — a profile whose peak never clears this speed
-// commands motion that never happens. Native units (turns/s), not chain
-// mm/s, since this is a property of the motor itself, independent of
-// whatever sprocket/chain ratio it happens to be driving.
-constexpr float kMinViableTurnsPerS = 1.5f;
-// Documented step intent (no linear ramp through the dead zone).
-constexpr float kFloorRampAccelMps2 = 50.0f;
-// Lab: sample_vel reaches ~command ~1.2 s after a step Set_Input_Vel at
-// 1.5–1.8 turns/s. Shorter windows stop during spool-up (~0 mm travel).
-constexpr float kSpinupLeadInS = 1.2f;
-// Coast time after Set_Input_Vel(0). Lab: stop at traveled=231 with lead≈75 mm
-// only coasted to 254 mm (≈23 mm) — 0.12 s lead was far too aggressive.
-constexpr float kCoastLeadS = 0.04f;
-constexpr float kCoastLeadMinMm = 10.0f;
-constexpr float kCoastLeadMaxMm = 40.0f;
-// Extra timeout beyond plan window so slow spool-up can still hit distance.
-constexpr float kClosedLoopTimeoutSlackS = 2.0f;
+using LabMotionLimits::kMinViableTurnsPerS;
+using LabMotionLimits::kFloorRampAccelMps2;
+using LabMotionLimits::kSpinupLeadInS;
+using LabMotionLimits::kCoastLeadS;
+using LabMotionLimits::kCoastLeadMinMm;
+using LabMotionLimits::kCoastLeadMaxMm;
+using LabMotionLimits::kClosedLoopTimeoutSlackS;
 } // namespace
 
 ChainMovePlan MotionPlanner::runtime_plan_distance_mm_in_time(

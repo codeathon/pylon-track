@@ -258,7 +258,29 @@ Session output under `sessions/arena_experiment/<timestamp>/`:
 | `ops_timing.csv` | Per-stage latency (`grab_to_frame`, `tracking_pipeline`, `chase_decision`, `flee_plan`, `motor_apply`, `flee_complete`) |
 | `chase_events.csv` | Hunt flee arm/complete (`flee_start`, `flee_complete`) with proximity + plan fields |
 
-**Hunt events:** while a trial is Running, a rising threat above `flee_threat_threshold` (both animals valid) arms a proximity-based MotionPlanner flee. After that flee finishes, another event can fire when threat crosses again, or when threat stays high for `hunt_event_min_interval_ms` (default 200).
+**Hunt events:** while a trial is Running, a rising threat above `flee_threat_threshold` (both animals valid) arms a proximity-based MotionPlanner flee. After that flee finishes, another event can fire when threat crosses again, or when threat stays high for `hunt_event_min_interval_ms` (default 1500).
+
+#### Lab chain motion limits
+
+Characterized on the arena ODrive (node 62, ~660.4 mm/turn) with closed-loop
+distance stop. Constants live in `include/motor/lab_motion_limits.h`.
+
+| Limit | Value | Notes |
+|-------|-------|-------|
+| Min viable command | ~1.5 turns/s (~1.0 m/s chain) | Below this, closed-loop often shows ~0 motion |
+| Spool-up | ~1.2 s | Time to approach a step velocity command |
+| Shortest reliable burst | **~80 mm** | Isolated move, either direction (~±5%) |
+| Comfortable / chase jab | **≥100–120 mm** | Tighter % error |
+| Live `min_flee_mm` default | **200 mm** | Conservative for hunt flees |
+| Back-to-back gap | **≥250 ms** | &lt;~100 ms gaps overshoot (~20–35 mm on 120/140) |
+
+Sweep after hardware changes:
+
+```bash
+./bin/test_odrive_move --config config/arena_experiment.json \
+  --distance-mm 100 --duration-ms 2000 --accel-mps2 50 --via-planner
+./bin/test_hunt_sim --config config/arena_experiment.json --duration-s 120 --max-accel 50
+```
 
 ### Arena config (`config/arena_experiment.json`)
 
@@ -267,7 +289,7 @@ Session output under `sessions/arena_experiment/<timestamp>/`:
 | `vision` | `ignore_regions`, `track_roi` | Mask pulleys/chains; animal area priors |
 | `motor` | `can_interface`, `node_id`, `chain_mm_per_motor_turn`, `chain_direction_sign` | ODrive CAN prey motor |
 | `shuttle` | `backend` (`noop` / `labjack`), `wobble_leg_ms`, `end_pulse_ms`, `hallway_high_turns`, `hallway_low_turns`, `labjack.pin_a`/`pin_b`/`high_voltage` | Shuttle motor via LabJack analog H-bridge (FIO4/FIO5 are analog-capable, not fixed digital — `high_voltage` sets the "on" level) |
-| `chase_policy` | `threat_distance_mm`, `cone_half_angle_deg`, speed limits | Cone-of-impact flee policy |
+| `chase_policy` | `threat_distance_mm`, `cone_half_angle_deg`, `min_flee_mm`, speed limits, `hunt_event_min_interval_ms` | Cone-of-impact flee policy (see lab limits above) |
 | `trial` | `timeout_s` | Trial timeout (future use) |
 
 Mark pulley/chain exclusion zones in `ignore_regions` using the interactive **arena** setup step (`setup --only arena`).

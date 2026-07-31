@@ -362,12 +362,17 @@ int main(int argc, char** argv) {
 		log_error("test", "MotionPlanner move failed or cancelled");
 		return 1;
 	}
-	if (std::fabs(delta_turns) < 0.1f) {
+	// Why: 0.1 turns ≈ 66 mm on this chain — that falsely failed 40–60 mm
+	// closed-loop moves that actually tracked. Score in mm vs the request.
+	const float delta_mm = motor.turns_to_chain_mm(delta_turns);
+	const float req_abs = std::fabs(args.distance_mm);
+	const float min_ok_mm = std::max(15.0f, 0.5f * req_abs);
+	if (std::fabs(delta_mm) < min_ok_mm) {
 		log_error("test",
-			"Encoder barely moved — compare:\n"
-			"  ./bin/test_odrive_move --config ... --vel-turns-s 1.8 --seconds 0.5\n"
-			"  ./bin/test_odrive_move --config ... --vel-turns-s 1.8 --seconds 5\n"
-			"If 0.5s fails and 5s works, short moves need a longer hold / higher peak.");
+			"Encoder travel too small (" + std::to_string(delta_mm)
+			+ " mm vs request " + std::to_string(args.distance_mm)
+			+ " mm). Compare:\n"
+			"  ./bin/test_odrive_move --config ... --vel-turns-s 1.8 --seconds 2");
 		return 1;
 	}
 	log_info("test", "Move complete");
