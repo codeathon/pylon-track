@@ -222,7 +222,10 @@ MoveTick MotionPlanner::tick(IMotor& motor) {
 		active_.store(false);
 		return MoveTick::Cancelled;
 	}
-	if (!motor.status().connected) {
+	// Why: is_connected() must not touch CAN. PreyMotor::status() blocks up to
+	// rx_timeout (~200 ms) waiting on encoder frames; short flees then hit
+	// duration_s and Done before any Set_Input_Vel is applied.
+	if (!motor.is_connected()) {
 		motor.stop();
 		active_.store(false);
 		return MoveTick::Cancelled;

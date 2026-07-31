@@ -263,10 +263,14 @@ bool execute_measured(PreyMotor& motor, MotionPlanner& planner,
 		++m.cmd_count;
 
 		const MoveTick tick = planner.tick(motor);
-		const float vel = std::fabs(motor.status().velocity_turns_s);
-		peak_abs_turns_s = std::max(peak_abs_turns_s, vel);
-		sum_abs_turns_s += vel;
-		++n_vel;
+		// Non-blocking encoder peek — never stall the Set_Input_Vel cadence.
+		float vel_sample = 0.0f;
+		if (motor.try_sample_velocity_turns_s(vel_sample, /*timeout_ms=*/0)) {
+			const float vel = std::fabs(vel_sample);
+			peak_abs_turns_s = std::max(peak_abs_turns_s, vel);
+			sum_abs_turns_s += vel;
+			++n_vel;
+		}
 		if (tick == MoveTick::Done) {
 			ok = true;
 			break;

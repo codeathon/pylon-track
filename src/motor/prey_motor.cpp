@@ -131,6 +131,30 @@ MotorStatus PreyMotor::status() const {
 	return status_;
 }
 
+bool PreyMotor::is_connected() const {
+	// No CAN — tick() calls this every ~20 ms and must stay non-blocking.
+	std::lock_guard<std::mutex> lock(status_mutex_);
+	return status_.connected;
+}
+
+bool PreyMotor::try_sample_velocity_turns_s(float& vel_turns_s, int timeout_ms) const {
+	if (!is_connected()) {
+		return false;
+	}
+	float pos = 0.0f;
+	float vel = 0.0f;
+	if (!can_.get_encoder_estimates(pos, vel, timeout_ms)) {
+		return false;
+	}
+	std::lock_guard<std::mutex> lock(status_mutex_);
+	status_.position_turns = pos;
+	status_.velocity_turns_s = vel;
+	status_.chain_position_mm = turns_to_chain_mm(pos);
+	status_.chain_velocity_mps = turns_s_to_chain_mps(vel);
+	vel_turns_s = vel;
+	return true;
+}
+
 bool PreyMotor::enter_velocity_mode(int timeout_ms) {
 	if (!status_.connected) {
 		return false;

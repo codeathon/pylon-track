@@ -20,9 +20,11 @@ public:
 	void close();
 	bool is_open() const { return socket_fd_ >= 0; }
 
-	// Request encoder estimates; returns false on timeout or bus error.
+	// Listen for cyclic encoder estimates; returns false on timeout or bus error.
 	// const: I/O over socket_fd_ does not change logical driver state.
-	bool get_encoder_estimates(float& pos_turns, float& vel_turns_s) const;
+	// timeout_ms < 0 → cfg_.rx_timeout_ms; 0 → non-blocking poll.
+	bool get_encoder_estimates(float& pos_turns, float& vel_turns_s,
+		int timeout_ms = -1) const;
 	bool set_input_velocity(float turns_s, float torque_ff = 0.0f);
 	bool set_limits(float velocity_limit_turns_s, float current_limit_a);
 	bool send_estop();
@@ -55,7 +57,8 @@ private:
 
 	bool send_frame(uint16_t cmd_id, const void* data, uint8_t len) const;
 	bool send_raw_frame(uint32_t can_id_11, const void* data, uint8_t len) const;
-	bool recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len_out) const;
+	bool recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len_out,
+		int timeout_ms = -1) const;
 	bool wait_for_axis_state(uint32_t wanted, int timeout_ms) const;
 	void flush_rx() const;
 	static uint16_t can_id(uint16_t cmd_id, uint8_t node_id);

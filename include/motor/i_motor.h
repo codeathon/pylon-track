@@ -12,4 +12,8 @@ public:
 	virtual void stop() = 0;
 	virtual void estop() = 0;
 	virtual MotorStatus status() const = 0;
+	// Why: MotionPlanner::tick must not call status() — on PreyMotor that blocks
+	// on CAN encoder RX (up to ~200 ms) and short distance moves expire before
+	// any Set_Input_Vel is sent. Cached connect flag only; no bus I/O.
+	virtual bool is_connected() const { return status().connected; }
 };

@@ -24,6 +24,10 @@ public:
 	void stop() override;
 	void estop() override;
 	MotorStatus status() const override;
+	bool is_connected() const override;
+
+	// Non-blocking / short-timeout encoder sample for telemetry (not the tick path).
+	bool try_sample_velocity_turns_s(float& vel_turns_s, int timeout_ms = 0) const;
 
 	bool enter_velocity_mode(int timeout_ms = 10000);
 	// Runs AXIS_STATE_FULL_CALIBRATION_SEQUENCE over CAN (motor will move).

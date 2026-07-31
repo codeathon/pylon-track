@@ -53,7 +53,11 @@ public:
 		++estop_count;
 		last_velocity_mps = 0.0f;
 	}
-	MotorStatus status() const override { return status_; }
+	MotorStatus status() const override {
+		++status_count;
+		return status_;
+	}
+	bool is_connected() const override { return status_.connected; }
 
 	void set_connected(bool c) { status_.connected = c; }
 
@@ -63,6 +67,7 @@ public:
 	int apply_count = 0;
 	int stop_count = 0;
 	int estop_count = 0;
+	mutable int status_count = 0;
 	std::vector<float> velocity_samples;
 };
 
@@ -250,6 +255,19 @@ void test_signed_distance_peak_sign() {
 	expect(p.peak_speed_mps < 0.0f, "negative_peak");
 }
 
+void test_tick_does_not_call_status() {
+	// Why: PreyMotor::status() blocks on CAN; tick must use is_connected only.
+	std::cout << "tick uses is_connected, not status()\n";
+	MotionPlanner planner;
+	FakeMotor motor;
+	motor.connect();
+	expect(planner.start_plan(feasible_plan(80.0f, 200)), "start");
+	motor.status_count = 0;
+	expect(planner.tick(motor) == MoveTick::Active, "active");
+	expect(motor.status_count == 0, "no_status_on_tick");
+	expect(motor.apply_count > 0, "applied");
+}
+
 } // namespace
 
 int main() {
@@ -265,6 +283,7 @@ int main() {
 	test_tick_disconnect_cancels();
 	test_execute_plan_blocking();
 	test_signed_distance_peak_sign();
+	test_tick_does_not_call_status();
 
 	std::cout << "=== " << (g_failures == 0 ? "ALL PASSED" : "FAILURES")
 		<< " (" << g_failures << ") ===\n";

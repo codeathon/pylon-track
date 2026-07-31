@@ -194,21 +194,33 @@ bool ODriveCan::wake_autobaud(int timeout_ms) {
 	return check_heartbeat();
 }
 
-bool ODriveCan::recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len_out) const {
+bool ODriveCan::recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len_out,
+	int timeout_ms) const
+{
 	if (socket_fd_ < 0) {
 		return false;
 	}
+	const int wait_ms = (timeout_ms < 0) ? cfg_.rx_timeout_ms : timeout_ms;
 	pollfd pfd{};
 	pfd.fd = socket_fd_;
 	pfd.events = POLLIN;
 	const auto deadline = std::chrono::steady_clock::now()
-		+ std::chrono::milliseconds(cfg_.rx_timeout_ms);
+		+ std::chrono::milliseconds(wait_ms);
 
 	// Bus is busy with cyclic encoder/heartbeat — skip non-matching frames until timeout.
-	while (std::chrono::steady_clock::now() < deadline) {
-		const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
-			deadline - std::chrono::steady_clock::now()).count();
-		if (poll(&pfd, 1, static_cast<int>(std::max<int64_t>(left, 0))) <= 0) {
+	// timeout_ms == 0: drain already-queued frames only (no wait) so telemetry cannot
+	// stall the Set_Input_Vel cadence used by MotionPlanner.
+	while (true) {
+		int poll_ms = 0;
+		if (wait_ms != 0) {
+			const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+				deadline - std::chrono::steady_clock::now()).count();
+			if (left < 0) {
+				return false;
+			}
+			poll_ms = static_cast<int>(left);
+		}
+		if (poll(&pfd, 1, poll_ms) <= 0) {
 			return false;
 		}
 
@@ -229,14 +241,15 @@ bool ODriveCan::recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len
 		}
 		return true;
 	}
-	return false;
 }
 
-bool ODriveCan::get_encoder_estimates(float& pos_turns, float& vel_turns_s) const {
+bool ODriveCan::get_encoder_estimates(float& pos_turns, float& vel_turns_s,
+	int timeout_ms) const
+{
 	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
 	// Cyclic by default (~10 ms); listen rather than request.
 	uint8_t buf[8] = {};
-	if (!recv_frame(CMD_GET_ENCODER_ESTIMATES, buf, sizeof(buf))) {
+	if (!recv_frame(CMD_GET_ENCODER_ESTIMATES, buf, sizeof(buf), timeout_ms)) {
 		return false;
 	}
 	unpack_float_le(buf, pos_turns);
