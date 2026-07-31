@@ -182,6 +182,11 @@ bool PreyMotor::set_velocity_turns_s(float turns_s) {
 	return can_.set_input_velocity(turns_s, 0.0f);
 }
 
+bool PreyMotor::command_turns_s(float turns_s) {
+	// Same entry point as --vel-turns-s (MotionPlanner blocking execute).
+	return set_velocity_turns_s(turns_s);
+}
+
 float PreyMotor::read_position_turns() const {
 	refresh_status();
 	std::lock_guard<std::mutex> lock(status_mutex_);

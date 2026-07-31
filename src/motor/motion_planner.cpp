@@ -74,28 +74,21 @@ ChainMovePlan MotionPlanner::runtime_plan_distance_mm_in_time(
 		peak_abs = min_viable_mps;
 	}
 
-	// Why: step/coast/stop — no linear ramp. This motor produces no motion while
-	// Set_Input_Vel is below ~1.5 turns/s, so a 20–50 ms ramp through that band
-	// (even at 50 m/s²) still wastes the first commands at dead-zone speeds.
-	// Hold peak for distance/peak (clamped to the window), then command 0.
+	// Why: hold peak for the full requested window (same as --vel-turns-s
+	// --seconds T). A 250 ms cruise on a 500 ms move showed ~0 encoder delta
+	// on the rig despite correct command values; full-window hold matches the
+	// known-good raw path. expected distance = peak * T (may exceed request).
 	const float accel_time = 0.0f;
-	const float cruise_time = (peak_abs > 1e-6f)
-		? std::min(duration_s, std::fabs(distance_m) / peak_abs)
-		: 0.0f;
-	p.accel_mps2 = kFloorRampAccelMps2; // documented intent: instant rise to peak
+	const float cruise_time = duration_s;
+	p.accel_mps2 = kFloorRampAccelMps2;
 
 	p.peak_speed_mps = std::copysign(peak_abs, distance_m);
 	p.accel_time_s = accel_time;
 	p.cruise_time_s = cruise_time;
-	// Why: keep the *requested* duration as the execute/tick window (matches the
-	// pre-chase loop proven on the rig). After accel+cruise+decel the sampler
-	// returns 0 and we keep feeding Set_Input_Vel(0) until duration elapses —
-	// shortening the window here caused short moves to end before the motor
-	// had spun up.
 	p.duration_s = duration_s;
 	p.duration_ms = duration_ms;
 	p.expected_distance_mm = std::copysign(
-		1000.0f * peak_abs * (accel_time + cruise_time), distance_mm);
+		1000.0f * peak_abs * cruise_time, distance_mm);
 	p.peak_turns_s = (p.peak_speed_mps * 1000.0f / p.mm_per_turn)
 		* static_cast<float>(p.chain_direction_sign);
 	p.vel_limit_ok = std::fabs(p.peak_turns_s) <= p.odrive_vel_limit_turns_s + 1e-3f;
@@ -249,10 +242,18 @@ MoveTick MotionPlanner::tick(IMotor& motor) {
 		return MoveTick::Done;
 	}
 
-	MotorCommand cmd;
-	cmd.mode = MotorMode::Velocity;
-	cmd.velocity_mps = sample_speed_mps(elapsed_s);
-	motor.apply(cmd);
+	const float speed_mps = sample_speed_mps(elapsed_s);
+	const float mm_per_turn = std::max(plan_.mm_per_turn, 1e-3f);
+	const float dir = static_cast<float>(
+		(plan_.chain_direction_sign < 0) ? -1 : 1);
+	const float turns_s = (speed_mps * 1000.0f / mm_per_turn) * dir;
+	// Prefer raw turns/s (PreyMotor); FakeMotor falls back to apply(mps).
+	if (!motor.command_turns_s(turns_s)) {
+		MotorCommand cmd;
+		cmd.mode = MotorMode::Velocity;
+		cmd.velocity_mps = speed_mps;
+		motor.apply(cmd);
+	}
 	return MoveTick::Active;
 }
 
@@ -277,13 +278,12 @@ bool MotionPlanner::execute_plan(IMotor& motor, const ChainMovePlan& plan)
 		return false;
 	}
 
-	// Why: IMotor::apply only — no dynamic_cast<PreyMotor>. Offline
-	// test_motion_planner links motion_planner without prey_motor.o.
 	plan_ = plan;
 	cancel_.store(false);
 	active_.store(true);
 	const auto start = std::chrono::steady_clock::now();
 	int applies = 0;
+	int send_ok = 0;
 	float peak_cmd_turns_s = 0.0f;
 	float last_cmd_turns_s = 0.0f;
 	const float mm_per_turn = std::max(plan_.mm_per_turn, 1e-3f);
@@ -297,18 +297,23 @@ bool MotionPlanner::execute_plan(IMotor& motor, const ChainMovePlan& plan)
 			break;
 		}
 		const float speed_mps = sample_speed_mps(elapsed_s);
-		// Same mm→turns math as PreyMotor::chain_mps_to_turns_s (for logging).
 		last_cmd_turns_s = (speed_mps * 1000.0f / mm_per_turn) * dir;
 		peak_cmd_turns_s = std::max(peak_cmd_turns_s, std::fabs(last_cmd_turns_s));
 		if (applies < 3) {
 			log_info("motor", "cmd #" + std::to_string(applies)
-				+ " Set_Input_Vel≈" + std::to_string(last_cmd_turns_s)
+				+ " Set_Input_Vel=" + std::to_string(last_cmd_turns_s)
 				+ " turns/s");
 		}
-		MotorCommand cmd;
-		cmd.mode = MotorMode::Velocity;
-		cmd.velocity_mps = speed_mps;
-		motor.apply(cmd);
+		// PreyMotor::command_turns_s → same CAN path as --vel-turns-s.
+		if (motor.command_turns_s(last_cmd_turns_s)) {
+			++send_ok;
+		} else {
+			MotorCommand cmd;
+			cmd.mode = MotorMode::Velocity;
+			cmd.velocity_mps = speed_mps;
+			motor.apply(cmd);
+			++send_ok; // FakeMotor / apply fallback
+		}
 		++applies;
 		std::this_thread::sleep_for(std::chrono::milliseconds(20));
 	}
@@ -321,7 +326,8 @@ bool MotionPlanner::execute_plan(IMotor& motor, const ChainMovePlan& plan)
 		return false;
 	}
 	log_info("motor", "Move complete (" + std::to_string(applies)
-		+ " commands, peak_cmd≈" + std::to_string(peak_cmd_turns_s)
-		+ " turns/s, last≈" + std::to_string(last_cmd_turns_s) + " turns/s)");
+		+ " commands, send_ok=" + std::to_string(send_ok)
+		+ ", peak_cmd=" + std::to_string(peak_cmd_turns_s)
+		+ " turns/s, last=" + std::to_string(last_cmd_turns_s) + " turns/s)");
 	return applies > 0;
 }

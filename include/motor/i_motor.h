@@ -16,4 +16,8 @@ public:
 	// on CAN encoder RX (up to ~200 ms) and short distance moves expire before
 	// any Set_Input_Vel is sent. Cached connect flag only; no bus I/O.
 	virtual bool is_connected() const { return status().connected; }
+	// Direct Set_Input_Vel (motor turns/s). Default unsupported — callers fall
+	// back to apply(velocity_mps). PreyMotor overrides to the same path as
+	// test_odrive_move --vel-turns-s (known-good on the lab rig).
+	virtual bool command_turns_s(float /*turns_s*/) { return false; }
 };

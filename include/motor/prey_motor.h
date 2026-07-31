@@ -25,6 +25,7 @@ public:
 	void estop() override;
 	MotorStatus status() const override;
 	bool is_connected() const override;
+	bool command_turns_s(float turns_s) override;
 
 	// Non-blocking / short-timeout encoder sample for telemetry (not the tick path).
 	bool try_sample_velocity_turns_s(float& vel_turns_s, int timeout_ms = 0) const;
