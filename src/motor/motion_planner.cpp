@@ -277,18 +277,18 @@ bool MotionPlanner::execute_plan(IMotor& motor, const ChainMovePlan& plan)
 		return false;
 	}
 
-	// Why: blocking tests use a direct Set_Input_Vel loop. Prefer PreyMotor's
-	// raw turns/s API (same path as --vel-turns-s) so mm→turns conversion and
-	// CAN send failures are visible in the log.
+	// Why: IMotor::apply only — no dynamic_cast<PreyMotor>. Offline
+	// test_motion_planner links motion_planner without prey_motor.o.
 	plan_ = plan;
 	cancel_.store(false);
 	active_.store(true);
 	const auto start = std::chrono::steady_clock::now();
 	int applies = 0;
-	int send_fail = 0;
 	float peak_cmd_turns_s = 0.0f;
 	float last_cmd_turns_s = 0.0f;
-	auto* prey = dynamic_cast<PreyMotor*>(&motor);
+	const float mm_per_turn = std::max(plan_.mm_per_turn, 1e-3f);
+	const float dir = static_cast<float>(
+		(plan_.chain_direction_sign < 0) ? -1 : 1);
 
 	while (!cancel_.load()) {
 		const float elapsed_s = std::chrono::duration<float>(
@@ -297,25 +297,18 @@ bool MotionPlanner::execute_plan(IMotor& motor, const ChainMovePlan& plan)
 			break;
 		}
 		const float speed_mps = sample_speed_mps(elapsed_s);
-		if (prey) {
-			last_cmd_turns_s = prey->chain_mps_to_turns_s(speed_mps);
-			peak_cmd_turns_s = std::max(peak_cmd_turns_s,
-				std::fabs(last_cmd_turns_s));
-			if (!prey->set_velocity_turns_s(last_cmd_turns_s)) {
-				++send_fail;
-			}
-			if (applies < 3) {
-				log_info("motor", "cmd #" + std::to_string(applies)
-					+ " Set_Input_Vel=" + std::to_string(last_cmd_turns_s)
-					+ " turns/s");
-			}
-		} else {
-			MotorCommand cmd;
-			cmd.mode = MotorMode::Velocity;
-			cmd.velocity_mps = speed_mps;
-			motor.apply(cmd);
-			last_cmd_turns_s = speed_mps; // FakeMotor: m/s as placeholder
+		// Same mm→turns math as PreyMotor::chain_mps_to_turns_s (for logging).
+		last_cmd_turns_s = (speed_mps * 1000.0f / mm_per_turn) * dir;
+		peak_cmd_turns_s = std::max(peak_cmd_turns_s, std::fabs(last_cmd_turns_s));
+		if (applies < 3) {
+			log_info("motor", "cmd #" + std::to_string(applies)
+				+ " Set_Input_Vel≈" + std::to_string(last_cmd_turns_s)
+				+ " turns/s");
 		}
+		MotorCommand cmd;
+		cmd.mode = MotorMode::Velocity;
+		cmd.velocity_mps = speed_mps;
+		motor.apply(cmd);
 		++applies;
 		std::this_thread::sleep_for(std::chrono::milliseconds(20));
 	}
@@ -328,8 +321,7 @@ bool MotionPlanner::execute_plan(IMotor& motor, const ChainMovePlan& plan)
 		return false;
 	}
 	log_info("motor", "Move complete (" + std::to_string(applies)
-		+ " commands, peak_cmd=" + std::to_string(peak_cmd_turns_s)
-		+ " turns/s, last=" + std::to_string(last_cmd_turns_s)
-		+ " turns/s, send_fail=" + std::to_string(send_fail) + ")");
-	return applies > 0 && send_fail == 0;
+		+ " commands, peak_cmd≈" + std::to_string(peak_cmd_turns_s)
+		+ " turns/s, last≈" + std::to_string(last_cmd_turns_s) + " turns/s)");
+	return applies > 0;
 }
