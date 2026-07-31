@@ -32,6 +32,12 @@ public:
 		int chain_direction_sign, float distance_mm, int duration_ms,
 		float max_accel_mps2 = 5.0f, float odrive_vel_limit_turns_s = 10.0f);
 
+	// Runtime profile actually sent to the motor (min-viable floor + fast ramp).
+	// Why: hunt-sim metrics compare encoder feedback to this plan, not the
+	// pure feasibility checklist from plan_distance_mm_in_time.
+	static ChainMovePlan runtime_plan_distance_mm_in_time(const PreyMotor& motor,
+		float distance_mm, int duration_ms, float max_accel_mps2 = 5.0f);
+
 	// Plan + blocking execute. If require_feasible, refuses when not feasible.
 	bool move_distance_mm_in_time(PreyMotor& motor, float distance_mm,
 		int duration_ms, float max_accel_mps2 = 5.0f,

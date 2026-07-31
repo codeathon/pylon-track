@@ -397,6 +397,7 @@ if(UNIX)
 		"  make test_odrive_move — chain distance/speed move via MotionPlanner\n"
 		"  make test_motion_planner — offline MotionPlanner unit tests (no CAN)\n"
 		"  make test_hunt_event — offline hunt-event edge/re-arm unit tests\n"
+		"  make test_hunt_sim   — ~2 min varied-speed hunt chain simulation (CAN)\n"
 		"  make ferret_tracker   — build → bin/ferret_tracker\n"
 		"  make run_rt           — run with SCHED_FIFO priority (low jitter)\n"
 		"  make install_udev     — install udev rules for USB camera access\n"

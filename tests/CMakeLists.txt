@@ -99,3 +99,23 @@ target_link_libraries(test_distance_moving PRIVATE
 	nlohmann_json::nlohmann_json
 	pthread
 )
+
+# ~2 minute scripted hunt: varied distance/duration/accel/direction moves.
+add_executable(test_hunt_sim
+	hunt_sim_suite.cpp
+	${CMAKE_SOURCE_DIR}/src/motor/odrive_can.cpp
+	${CMAKE_SOURCE_DIR}/src/motor/prey_motor.cpp
+	${CMAKE_SOURCE_DIR}/src/motor/motion_planner.cpp
+	${CMAKE_SOURCE_DIR}/src/experiment/arena_config.cpp
+	${CMAKE_SOURCE_DIR}/src/calibrate/setup_util.cpp
+	${CMAKE_SOURCE_DIR}/src/log/logger.cpp
+)
+target_include_directories(test_hunt_sim PRIVATE
+	${CMAKE_SOURCE_DIR}/include
+	${OpenCV_INCLUDE_DIRS}
+)
+target_link_libraries(test_hunt_sim PRIVATE
+	${OpenCV_LIBS}
+	nlohmann_json::nlohmann_json
+	pthread
+)

@@ -22,12 +22,14 @@ constexpr float kMinViableTurnsPerS = 1.5f;
 // that actually turns the chain. 50 m/s^2 matches the --max-accel value
 // that was confirmed on the rig to move the chain.
 constexpr float kFloorRampAccelMps2 = 50.0f;
+} // namespace
 
 // Build an executable profile with min-viable floor + real (fast) accel ramp.
 // Why: plan_chain_move is a feasibility checklist; runtime also lifts peaks
 // that would sit in the dead zone and ramps quickly so torque actually appears.
-ChainMovePlan build_runtime_plan(const PreyMotor& motor, float distance_mm,
-	int duration_ms, float max_accel_mps2)
+ChainMovePlan MotionPlanner::runtime_plan_distance_mm_in_time(
+	const PreyMotor& motor, float distance_mm, int duration_ms,
+	float max_accel_mps2)
 {
 	ChainMovePlan p;
 	p.distance_mm = distance_mm;
@@ -99,8 +101,6 @@ ChainMovePlan build_runtime_plan(const PreyMotor& motor, float distance_mm,
 	return p;
 }
 
-} // namespace
-
 MotionPlanner::~MotionPlanner() {
 	// Why: no further ticks after destroy — clear active so is_busy() is false.
 	cancel_.store(true);
@@ -154,8 +154,8 @@ bool MotionPlanner::move_distance_mm_in_time(PreyMotor& motor, float distance_mm
 	}
 
 	// Why: runtime plan applies 1.5 turns/s floor + fast ramp from web-ui-odrive.
-	ChainMovePlan plan = build_runtime_plan(motor, distance_mm, duration_ms,
-		max_accel_mps2);
+	ChainMovePlan plan = runtime_plan_distance_mm_in_time(motor, distance_mm,
+		duration_ms, max_accel_mps2);
 	if (out_plan) {
 		*out_plan = plan;
 	}
