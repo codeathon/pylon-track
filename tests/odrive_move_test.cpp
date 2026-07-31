@@ -12,7 +12,9 @@
 #include <csignal>
 #include <cstring>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <thread>
 
@@ -43,13 +45,15 @@ void print_usage() {
 		"  test_odrive_move --config <arena_experiment.json>\n"
 		"                   --distance-mm <mm>\n"
 		"                   (--speed-mmps <mm/s> | --duration-ms <ms>)\n"
-		"                   [--accel-mps2 <m/s^2>] [--plan-only] [--verbose]\n"
+		"                   [--accel-mps2 <m/s^2>] [--via-planner]\n"
+		"                   [--plan-only] [--verbose]\n"
 		"\n"
 		"  test_odrive_move --config <arena_experiment.json>\n"
 		"                   --vel-turns-s <turns/s> --seconds <s>\n"
 		"\n"
 		"--plan-only prints the feasibility checklist (no motor motion).\n"
-		"Distance mode uses MotionPlanner. --vel-turns-s bypasses mm conversion.\n";
+		"Distance mode defaults to the same Set_Input_Vel loop as --vel-turns-s\n"
+		"(planned peak held for the full window). --via-planner uses MotionPlanner.\n";
 }
 
 struct Args {
@@ -68,7 +72,50 @@ struct Args {
 	bool have_vel_turns = false;
 	bool have_seconds = false;
 	bool plan_only = false;
+	// Why: default distance path must match known-good raw spin; planner is opt-in.
+	bool via_planner = false;
 };
+
+// Shared spin loop for --vel-turns-s and default distance mode.
+// Returns encoder delta (turns). Prints mid-move vel / axis_state / err.
+float spin_turns_s_for(PreyMotor& motor, float turns_s, float seconds) {
+	const float pos_before = motor.read_position_turns();
+	const auto end = std::chrono::steady_clock::now()
+		+ std::chrono::milliseconds(static_cast<int>(seconds * 1000.0f));
+	float vel_sample = 0.0f;
+	uint32_t err = 0;
+	uint32_t state = 0;
+	int cmds = 0;
+	while (std::chrono::steady_clock::now() < end) {
+		if (!motor.set_velocity_turns_s(turns_s)) {
+			log_error("test", "Set_Input_Vel failed");
+			motor.stop();
+			return motor.read_position_turns() - pos_before;
+		}
+		++cmds;
+		// Sample feedback like the known-good raw path (also feeds diagnostics).
+		vel_sample = motor.status().velocity_turns_s;
+		motor.read_axis_state(err, state);
+		if (cmds <= 3 || cmds % 5 == 0) {
+			std::ostringstream oss;
+			oss << "spin cmd#" << cmds
+				<< " cmd=" << turns_s
+				<< " sample_vel=" << vel_sample
+				<< " axis_state=" << state
+				<< " err=0x" << std::hex << err << std::dec;
+			log_info("test", oss.str());
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	}
+	motor.stop();
+	const float delta = motor.read_position_turns() - pos_before;
+	std::cout << "Encoder delta: " << delta << " turns"
+		<< " (cmds=" << cmds
+		<< ", sample vel " << vel_sample
+		<< ", axis_state=" << state << ", err=0x" << std::hex << err
+		<< std::dec << ")\n";
+	return delta;
+}
 
 bool parse_args(int argc, char** argv, Args& args) {
 	for (int i = 1; i < argc; ++i) {
@@ -95,6 +142,8 @@ bool parse_args(int argc, char** argv, Args& args) {
 			args.verbose = true;
 		} else if (std::strcmp(argv[i], "--plan-only") == 0) {
 			args.plan_only = true;
+		} else if (std::strcmp(argv[i], "--via-planner") == 0) {
+			args.via_planner = true;
 		} else if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
 			return false;
 		} else {
@@ -205,39 +254,20 @@ int main(int argc, char** argv) {
 	std::signal(SIGINT, on_stop_signal);
 	std::signal(SIGTERM, on_stop_signal);
 
-	// Raw turns/s path — skips mm scale; use this if distance mode shows ~0 delta.
+	// Raw turns/s path — skips mm scale.
 	if (args.have_vel_turns) {
 		if (!connect_motor(motor)) {
 			return 1;
 		}
 		std::cout << "Raw spin: " << args.vel_turns_s << " turns/s for "
 			<< args.seconds << "s (Ctrl+C to abort)\n";
-		const float pos_before = motor.read_position_turns();
-		const auto end = std::chrono::steady_clock::now()
-			+ std::chrono::milliseconds(static_cast<int>(args.seconds * 1000.0f));
-		float vel_sample = 0.0f;
-		uint32_t err = 0;
-		uint32_t state = 0;
-		while (std::chrono::steady_clock::now() < end) {
-			if (!motor.set_velocity_turns_s(args.vel_turns_s)) {
-				log_error("test", "Set_Input_Vel failed");
-				motor.stop();
-				return 1;
-			}
-			vel_sample = motor.status().velocity_turns_s;
-			motor.read_axis_state(err, state);
-			std::this_thread::sleep_for(std::chrono::milliseconds(100));
-		}
-		motor.stop();
-		const float delta = motor.read_position_turns() - pos_before;
-		std::cout << "Encoder delta: " << delta << " turns"
-			<< " (sample vel " << vel_sample
-			<< ", axis_state=" << state << ", err=0x" << std::hex << err
-			<< std::dec << ")\n";
+		const float delta = spin_turns_s_for(motor, args.vel_turns_s, args.seconds);
+		g_motor = nullptr;
 		if (std::fabs(delta) < 0.1f) {
 			log_error("test",
 				"Motor did not spin — ODrive velocity control/calibration issue "
-				"(not MotionPlanner). Try GUI closed-loop at input_vel=1");
+				"(not MotionPlanner). Try GUI closed-loop at input_vel=1, or "
+				"--seconds 5");
 			return 1;
 		}
 		log_info("test", "Raw spin complete");
@@ -257,30 +287,51 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	const float pos_before = motor.read_position_turns();
-	MotionPlanner planner;
-	g_planner = &planner;
+	const ChainMovePlan runtime = MotionPlanner::runtime_plan_distance_mm_in_time(
+		motor, args.distance_mm, duration_ms, args.accel_mps2);
 	std::cout << "Press Ctrl+C to abort the move.\n";
-	ChainMovePlan executed;
-	const bool ok = planner.move_distance_mm_in_time(motor, args.distance_mm,
-		duration_ms, args.accel_mps2, /*require_feasible=*/true, &executed);
-	g_planner = nullptr;
-	motor.stop();
+
+	float delta_turns = 0.0f;
+	float planned_mm = runtime.expected_distance_mm;
+	bool ok = true;
+
+	if (args.via_planner) {
+		// Opt-in: exercise MotionPlanner::execute_plan (chase path).
+		const float pos_before = motor.read_position_turns();
+		MotionPlanner planner;
+		g_planner = &planner;
+		ChainMovePlan executed;
+		ok = planner.move_distance_mm_in_time(motor, args.distance_mm,
+			duration_ms, args.accel_mps2, /*require_feasible=*/true, &executed);
+		g_planner = nullptr;
+		motor.stop();
+		delta_turns = motor.read_position_turns() - pos_before;
+		planned_mm = executed.expected_distance_mm;
+		std::cout << "Encoder delta: " << delta_turns << " turns ("
+			<< motor.turns_to_chain_mm(delta_turns) << " mm chain); planned "
+			<< planned_mm << " mm [--via-planner]\n";
+	} else {
+		// Default: identical CAN loop to --vel-turns-s (isolates planner bugs).
+		std::cout << "Direct spin at planned peak " << runtime.peak_turns_s
+			<< " turns/s for " << (duration_ms / 1000.0f) << "s "
+			<< "(same loop as --vel-turns-s; use --via-planner for MotionPlanner)\n";
+		delta_turns = spin_turns_s_for(motor, runtime.peak_turns_s,
+			duration_ms / 1000.0f);
+		std::cout << "Chain delta: " << motor.turns_to_chain_mm(delta_turns)
+			<< " mm; planned " << planned_mm << " mm\n";
+	}
 	g_motor = nullptr;
 
-	const float delta_turns = motor.read_position_turns() - pos_before;
-	const float delta_mm = motor.turns_to_chain_mm(delta_turns);
-	std::cout << "Encoder delta: " << delta_turns << " turns ("
-		<< delta_mm << " mm chain); planned "
-		<< executed.expected_distance_mm << " mm\n";
 	if (!ok) {
 		log_error("test", "MotionPlanner move failed or cancelled");
 		return 1;
 	}
 	if (std::fabs(delta_turns) < 0.1f) {
 		log_error("test",
-			"Encoder barely moved — retry with: "
-			"./bin/test_odrive_move --config ... --vel-turns-s 1 --seconds 5");
+			"Encoder barely moved — compare:\n"
+			"  ./bin/test_odrive_move --config ... --vel-turns-s 1.8 --seconds 0.5\n"
+			"  ./bin/test_odrive_move --config ... --vel-turns-s 1.8 --seconds 5\n"
+			"If 0.5s fails and 5s works, short moves need a longer hold / higher peak.");
 		return 1;
 	}
 	log_info("test", "Move complete");
