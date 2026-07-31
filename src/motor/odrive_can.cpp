@@ -114,9 +114,12 @@ bool ODriveCan::open() {
 	// Restrict the socket to frames addressed to this node (any cmd_id) —
 	// without this every frame on the bus (other axes' heartbeats, etc.) is
 	// delivered here too, which recv_frame would otherwise have to wade through.
+	// Arbitration ID layout is (node_id << 5) | cmd_id (see can_id() below), so
+	// the node_id field lives in bits 5-10, not the low 5 bits — mask/match
+	// only that range and let cmd_id (bits 0-4) be anything.
 	can_filter filter{};
-	filter.can_id = cfg_.node_id;
-	filter.can_mask = 0x1F;
+	filter.can_id = static_cast<canid_t>(cfg_.node_id) << 5;
+	filter.can_mask = 0x3Fu << 5;
 	if (setsockopt(socket_fd_, SOL_CAN_RAW, CAN_RAW_FILTER, &filter, sizeof(filter)) < 0) {
 		log_error("motor", "CAN filter setup failed on " + cfg_.interface + " (continuing unfiltered)");
 	}
