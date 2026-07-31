@@ -19,10 +19,11 @@ constexpr float kFloorRampAccelMps2 = 50.0f;
 // Lab: sample_vel reaches ~command ~1.2 s after a step Set_Input_Vel at
 // 1.5–1.8 turns/s. Shorter windows stop during spool-up (~0 mm travel).
 constexpr float kSpinupLeadInS = 1.2f;
-// Coast time after Set_Input_Vel(0) — stop this early so chain settles near target.
-constexpr float kCoastLeadS = 0.12f;
-constexpr float kCoastLeadMinMm = 15.0f;
-constexpr float kCoastLeadMaxMm = 100.0f;
+// Coast time after Set_Input_Vel(0). Lab: stop at traveled=231 with lead≈75 mm
+// only coasted to 254 mm (≈23 mm) — 0.12 s lead was far too aggressive.
+constexpr float kCoastLeadS = 0.04f;
+constexpr float kCoastLeadMinMm = 10.0f;
+constexpr float kCoastLeadMaxMm = 40.0f;
 // Extra timeout beyond plan window so slow spool-up can still hit distance.
 constexpr float kClosedLoopTimeoutSlackS = 2.0f;
 } // namespace
@@ -250,8 +251,8 @@ bool MotionPlanner::closed_loop_distance_reached(IMotor& motor,
 	// Stop early by ~coast distance so Set_Input_Vel(0) settles near target.
 	float lead_mm = std::fabs(vel) * mm_per_turn * kCoastLeadS;
 	lead_mm = std::max(kCoastLeadMinMm, std::min(kCoastLeadMaxMm, lead_mm));
-	// Why: never spend more than 25% of the request on coast lead (short moves).
-	lead_mm = std::min(lead_mm, std::max(5.0f, 0.25f * target_abs));
+	// Why: never spend more than 12% of the request on coast lead (short moves).
+	lead_mm = std::min(lead_mm, std::max(5.0f, 0.12f * target_abs));
 	return progress + lead_mm >= target_abs;
 }
 
