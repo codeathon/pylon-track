@@ -20,6 +20,8 @@ struct ChasePolicyConfig {
 	float flee_gap_gain = 0.25f;   // fraction of current ferret–prey gap
 	float flee_speed_gain = 0.15f; // seconds of closing-speed look-ahead
 	float flee_accel_mps2 = 5.0f;
+	// After a flee completes, re-arm hunt events while threat stays high.
+	int hunt_event_min_interval_ms = 200;
 };
 
 struct MotorConfig {

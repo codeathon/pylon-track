@@ -41,7 +41,8 @@
 		"max_flee_mm": 400.0,
 		"flee_gap_gain": 0.25,
 		"flee_speed_gain": 0.15,
-		"flee_accel_mps2": 5.0
+		"flee_accel_mps2": 5.0,
+		"hunt_event_min_interval_ms": 200
 	},
 	"trial": {
 		"timeout_s": 120.0

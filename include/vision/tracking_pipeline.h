@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <opencv2/opencv.hpp>
 #include <optional>
 #include <vector>
@@ -15,6 +16,8 @@ struct TrackingProcessOutput {
 	TrackingFrame frame;
 	cv::Mat display_frame;
 	std::vector<std::vector<cv::Point>> contours;
+	// Steady-clock microseconds for SessionRecorder ops_timing.
+	int64_t pipeline_duration_us = 0;
 };
 
 // MOG2 + contour + Kalman pipeline (logic formerly in FerretTracker).

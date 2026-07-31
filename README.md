@@ -249,7 +249,16 @@ make
 
 Operator keys during experiment: **`s`** start chase trial, **`e`** end, **`r`** reset.
 
-Session output: `sessions/arena_experiment/<timestamp>/telemetry.csv` + `events.csv`.
+Session output under `sessions/arena_experiment/<timestamp>/`:
+
+| File | Contents |
+|------|----------|
+| `telemetry.csv` | Per-frame kinematics (distance, closing speed, …) |
+| `events.csv` | Trial start / end / reset |
+| `ops_timing.csv` | Per-stage latency (`grab_to_frame`, `tracking_pipeline`, `chase_decision`, `flee_plan`, `motor_apply`, `flee_complete`) |
+| `chase_events.csv` | Hunt flee arm/complete (`flee_start`, `flee_complete`) with proximity + plan fields |
+
+**Hunt events:** while a trial is Running, a rising threat above `flee_threat_threshold` (both animals valid) arms a proximity-based MotionPlanner flee. After that flee finishes, another event can fire when threat crosses again, or when threat stays high for `hunt_event_min_interval_ms` (default 200).
 
 ### Arena config (`config/arena_experiment.json`)
 

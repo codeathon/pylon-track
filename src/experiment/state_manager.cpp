@@ -109,8 +109,10 @@ bool ExperimentStateManager::phase_setup() {
 	shuttle_motor_ = std::make_unique<ShuttleMotor>(cfg_.shuttle);
 	// Why: chase flees tick MotionPlanner non-blockingly at 50 Hz.
 	motion_planner_ = std::make_unique<MotionPlanner>();
+	// Why: chase logs hunt flee events + op timings into the open session.
 	chase_controller_ = std::make_unique<ChaseController>(
-		*prey_motor_, *motion_planner_, cfg_.chase, cfg_.motor.chain_direction_sign);
+		*prey_motor_, *motion_planner_, cfg_.chase, cfg_.motor.chain_direction_sign,
+		recorder_.get());
 
 	log_info("experiment", "Setup complete — config: " + cfg_path);
 	return true;
