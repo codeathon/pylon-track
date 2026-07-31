@@ -14,7 +14,7 @@ namespace {
 // commands motion that never happens. Native units (turns/s), not chain
 // mm/s, since this is a property of the motor itself, independent of
 // whatever sprocket/chain ratio it happens to be driving.
-constexpr float kMinViableTurnsPerS = 0.5f;
+constexpr float kMinViableTurnsPerS = 1.5f;
 // Ramp rate used only to reach kMinViableTurnsPerS in the floor case below —
 // separate from the caller's max_accel_mps2, which that case overrides.
 constexpr float kFloorRampAccelMps2 = 2.0f;
