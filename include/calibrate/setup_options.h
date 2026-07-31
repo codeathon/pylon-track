@@ -28,4 +28,6 @@ struct SetupOptions {
 	// steps (ODrive test spin, LabJack shuttle wobble) can stop the motor
 	// promptly on Ctrl-C instead of riding out a blind sleep. May be null.
 	std::atomic<bool>* running = nullptr;
+	// ODrive setup test-spin duration (seconds).
+	float spin_seconds = 10.0f;
 };

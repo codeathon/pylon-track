@@ -26,7 +26,8 @@ bool PreyMotor::connect() {
 		return false;
 	}
 	status_.connected = true;
-	status_.heartbeat_ok = can_.check_heartbeat();
+	// Autobaud drives stay silent until they see host traffic — beacon first.
+	status_.heartbeat_ok = can_.wake_autobaud(3000);
 	refresh_status();
 	log_info("motor", status_.heartbeat_ok
 		? "PreyMotor connected with heartbeat"
@@ -93,9 +94,17 @@ void PreyMotor::apply(const MotorCommand& cmd) {
 		return;
 	}
 	if (cmd.mode == MotorMode::Velocity) {
+		if (!has_valid_chain_scale() && std::fabs(cmd.velocity_mps) > 1e-6f) {
+			// Why: both chain_mm_per_motor_turn and pulley_radius_m were 0 in lab JSON.
+			log_error("motor",
+				"Cannot command chain velocity — set motor.chain_mm_per_motor_turn "
+				"(e.g. 157) or motor.pulley_radius_m in arena_experiment.json");
+			return;
+		}
 		const float turns_s = chain_mps_to_turns_s(cmd.velocity_mps);
+		// No refresh_status here — MotionPlanner runs ~50 Hz and must keep
+		// Set_Input_Vel flowing faster than the ODrive watchdog.
 		can_.set_input_velocity(turns_s, 0.0f);
-		refresh_status();
 	}
 }
 
@@ -126,20 +135,35 @@ bool PreyMotor::enter_velocity_mode(int timeout_ms) {
 	if (!status_.connected) {
 		return false;
 	}
+	// Stale disarm/watchdog faults block CLOSED_LOOP until cleared.
+	can_.clear_errors();
 	return can_.enter_velocity_mode(timeout_ms);
+}
+
+bool PreyMotor::run_full_calibration(int timeout_ms) {
+	if (!status_.connected) {
+		return false;
+	}
+	return can_.run_full_calibration(timeout_ms);
 }
 
 bool PreyMotor::set_velocity_turns_s(float turns_s) {
 	if (!status_.connected) {
 		return false;
 	}
-	const bool ok = can_.set_input_velocity(turns_s, 0.0f);
-	refresh_status();
-	return ok;
+	// Skip refresh on the command path so spin loops can feed the watchdog.
+	return can_.set_input_velocity(turns_s, 0.0f);
 }
 
 float PreyMotor::read_position_turns() const {
 	refresh_status();
 	std::lock_guard<std::mutex> lock(status_mutex_);
 	return status_.position_turns;
+}
+
+bool PreyMotor::read_axis_state(uint32_t& axis_error, uint32_t& axis_state) const {
+	if (!status_.connected) {
+		return false;
+	}
+	return can_.get_axis_state(axis_error, axis_state);
 }

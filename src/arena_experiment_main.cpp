@@ -33,6 +33,7 @@ struct CliOptions {
 	std::string camera_config;
 	std::string calib_path;
 	std::string only_step;
+	float spin_seconds = 10.0f;
 };
 
 static void print_usage() {
@@ -46,6 +47,7 @@ static void print_usage() {
 		"\n"
 		"Options:\n"
 		"  --only <arena|camera|odrive|labjack>  run one setup step only\n"
+		"  --spin-seconds <n>                      ODrive test-spin duration (default 10)\n"
 		"  --skip-interactive                      non-interactive setup (CI)\n"
 		"  --display                               required for arena/camera setup\n"
 		"  --no-calib                              run without calib.npz (dev)\n"
@@ -92,6 +94,9 @@ static bool parse_args(int argc, char** argv, CliOptions& opts) {
 		} else if (std::strcmp(argv[i], "--only") == 0) {
 			if (i + 1 >= argc) return false;
 			opts.only_step = argv[++i];
+		} else if (std::strcmp(argv[i], "--spin-seconds") == 0) {
+			if (i + 1 >= argc) return false;
+			opts.spin_seconds = std::stof(argv[++i]);
 		} else {
 			std::cerr << "ERROR: Unknown argument: " << argv[i] << '\n';
 			return false;
@@ -133,6 +138,7 @@ int main(int argc, char** argv) {
 		opts.skip_interactive = cli.skip_interactive;
 		opts.display = cli.enable_display;
 		opts.running = &g_running;
+		opts.spin_seconds = cli.spin_seconds;
 		if (!cli.only_step.empty()) {
 			opts.only = parse_setup_step(cli.only_step);
 		}

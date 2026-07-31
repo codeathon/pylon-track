@@ -1,0 +1,21 @@
+[Unit]
+Description=pylon-track SocketCAN bring-up (can0 @ 250 kbit/s)
+Documentation=https://docs.odriverobotics.com/v/latest/guides/can-guide.html#id4
+# Ensure USB-CAN drivers are loaded before we touch the iface.
+RequiresMountsFor=/sys
+# Start when the USB-CAN adapter appears as can0; stop if it disappears.
+BindsTo=sys-subsystem-net-devices-can0.device
+After=sys-subsystem-net-devices-can0.device
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Belt-and-suspenders if modules-load.d has not run yet this boot.
+ExecStartPre=-/sbin/modprobe gs_usb
+ExecStartPre=-/sbin/modprobe peak_usb
+ExecStart=@CMAKE_INSTALL_FULL_SBINDIR@/can0-up.sh can0 250000
+
+[Install]
+WantedBy=multi-user.target
+# Also start whenever can0 shows up after boot / re-plug.
+WantedBy=sys-subsystem-net-devices-can0.device

@@ -52,9 +52,10 @@ Re-run one step: `--only arena|camera|odrive|labjack`.
 **Run** (each session):
 
 ```bash
-sudo ip link set can0 up type can bitrate 250000   # if using prey motor
 ./build/bin/arena_experiment run --config config/arena_experiment.json --session sessions
 ```
+
+SocketCAN `can0` should already be **UP** after `cmake && make` (make installs the host unit with sudo — see [CAN host bring-up](#can-host-bring-up-socketcan)). Verify: `ip addr show can0` (flags include `UP`).
 
 Per-session flow:
 
@@ -94,6 +95,7 @@ pylon-track/
 │   ├── motor/
 │   ├── tracker/
 │   └── vision/
+├── scripts/                  SocketCAN can0 bring-up (systemd + can0-up.sh)
 ├── tests/                    Camera calibration suite (hardware-in-the-loop)
 └── build/bin/
     ├── ferret_tracker
@@ -167,6 +169,39 @@ This builds `ferret_tracker`, `arena_experiment`, and the calibration tools
 (`test_param_sweep`, `test_latency`, `test_mount_height`). Disable the suite with
 `-DBUILD_CALIBRATION_TESTS=OFF` if you only need the production binaries.
 
+### CAN host bring-up (SocketCAN)
+
+USB-CAN adapters (e.g. ODrive USB-CAN / candleLight) need a kernel driver, then
+`can0` brought up at **250000**
+([ODrive host guide](https://docs.odriverobotics.com/v/latest/guides/can-guide.html#id4)).
+
+**`make` is the one entry point** (default `INSTALL_CAN0_HOST=ON`): with sudo it
+loads drivers, installs the reboot unit, runs `can0-up.sh`, and **fails the build**
+if `can0` is not administratively UP afterward. No separate `systemctl` / `ip link`
+steps. Check CMakeCache if it was turned off during debugging:
+
+```bash
+grep INSTALL_CAN0_HOST CMakeCache.txt   # should be ON
+cmake -DINSTALL_CAN0_HOST=ON ..
+make                                    # prompts sudo; leaves can0 UP
+ip addr show can0                       # must show UP in <...> flags
+```
+
+Skip with `-DINSTALL_CAN0_HOST=OFF`.
+
+**Hardware note:** the ODrive’s USB *config* port is not SocketCAN. You need a
+USB-CAN adapter on the CAN bus. If make errors with “no can0”, plug that adapter
+in and re-run `make` — no separate `systemctl` / `modprobe` / `ip link` steps.
+
+Optional heartbeat smoke test (ODrive powered): `sudo apt install can-utils && candump can0 -xct z -n 10`.
+
+**Autobaud:** with `can.config.baud_rate = 0`, the ODrive stays silent until it
+sees host CAN traffic. `can0-up.sh` and every `PreyMotor::connect()` send a short
+beacon (≥10 Hz) so heartbeats (`7C1` for node 62) appear without a manual `cangen`.
+
+ODrive CAN/node ID is a separate one-time drive setting (odrivetool/Web GUI) —
+already done on this lab rig; only needed again if NVM is wiped.
+
 If pylon is installed elsewhere:
 
 ```bash
@@ -190,11 +225,14 @@ cmake -DOpenCV_DIR=/usr/lib/x86_64-linux-gnu/cmake/opencv4 -DPYLON_ROOT=/opt/pyl
 ### Arena experiment (closed-loop chase)
 
 ```bash
+# Configure + build (make also installs/enables SocketCAN can0 — may prompt sudo)
+cmake -DPYLON_ROOT=/opt/pylon ..
+make
+
 # One-time rig setup (arena masks, ChArUco lens, ODrive chain, LabJack shuttle motor)
 ./build/bin/arena_experiment setup --config config/arena_experiment.json --display
 
-# Each experiment session
-sudo ip link set can0 up type can bitrate 250000
+# Each experiment session (can0 should already be UP)
 ./build/bin/arena_experiment run \
   --config config/arena_experiment.json \
   --session sessions
@@ -258,13 +296,13 @@ All setup is C++ — no Python dependencies.
 |------|----------------|--------|
 | **Arena** | `i` ignore region, `r` track ROI, LMB vertex, RMB close, `s` save, `q` quit | `vision.ignore_regions`, `vision.track_roi` in JSON |
 | **Camera** | SPACE save ChArUco frame, `q` quit (~20 frames), then auto-calibrate | `calib.npz` beside executable |
-| **ODrive** | CAN must be up; measure chain travel (mm), confirm direction | `motor.*` in JSON |
+| **ODrive** | `can0` UP; measure chain travel (mm), confirm direction | `motor.*` in JSON |
 | **LabJack** | Wobbles the shuttle motor for 3s; confirm it moved | validates wiring (noop backend skips) |
 
-ODrive chain setup uses **SocketCAN** (same path as runtime chase). Ensure CAN is enabled on the drive (odrivetool/Web GUI once), then:
+ODrive chain setup uses **SocketCAN** (same path as runtime chase). Host `can0`
+must be UP (`ip addr show can0` flags include `UP`). After `cmake && make`, run:
 
 ```bash
-sudo ip link set can0 up type can bitrate 250000
 ./build/bin/arena_experiment setup --config config/arena_experiment.json --only odrive
 ```
 
@@ -629,6 +667,7 @@ metric interpretation.
 | `test_mount_height` | `make test_mount_height` | Calibration: mount height validation |
 | `run_rt` | `make run_rt` | Run with SCHED_FIFO priority |
 | `install_udev` | `make install_udev` | Install Basler USB udev rules |
+| `can0_host` (via `make`) | included in default `make` | Install/enable SocketCAN can0 (sudo) |
 
 ## Troubleshooting
 
@@ -640,7 +679,7 @@ metric interpretation.
 | `pylon SDK not found` | Set `-DPYLON_ROOT=` to your install prefix |
 | No camera found | USB cable, `install_udev`, camera powered |
 | No valid tracks after warmup | Lighting, gain, arena mask / ignore_regions, animal area priors in `arena_experiment.json` |
-| Motor connect failed in arena_experiment | CAN up? `sudo ip link set can0 up type can bitrate 250000`; run `arena_experiment setup --only odrive` |
+| Motor connect failed / CAN not UP | USB-CAN adapter plugged in? Re-run `make`; `ip addr show can0`; `lsusb` / `dmesg` |
 | Low frame rate | AOI size, `DeviceLinkThroughputLimitMode`, USB3 port |
 | High jitter | `make run_rt`, CPU isolation, reduce pipeline load |
 | Calibration tools missing after build | Ensure `BUILD_CALIBRATION_TESTS=ON` (default); run `make` not only `make ferret_tracker` |

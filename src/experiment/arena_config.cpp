@@ -1,10 +1,13 @@
 #include "experiment/arena_config.h"
 
+#include <filesystem>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include "log/logger.h"
 
 namespace {
+
+namespace fs = std::filesystem;
 
 template<typename T>
 T json_or(const nlohmann::json& j, const char* key, T fallback) {
@@ -12,6 +15,24 @@ T json_or(const nlohmann::json& j, const char* key, T fallback) {
 		return j.at(key).get<T>();
 	}
 	return fallback;
+}
+
+// Avoid nlohmann get<uint8_t> quirks — load node_id as int then clamp.
+uint8_t json_node_id(const nlohmann::json& j, uint8_t fallback) {
+	if (!j.contains("node_id")) {
+		return fallback;
+	}
+	const int id = j.at("node_id").get<int>();
+	if (id < 0 || id > 63) {
+		return fallback;
+	}
+	return static_cast<uint8_t>(id);
+}
+
+std::string absolute_config_path(const std::string& path) {
+	std::error_code ec;
+	const fs::path abs = fs::weakly_canonical(fs::absolute(path), ec);
+	return ec ? path : abs.string();
 }
 
 std::vector<cv::Point> parse_polygon_points(const nlohmann::json& points_json) {
@@ -52,9 +73,10 @@ void load_track_roi(const nlohmann::json& vision_json, ArenaMaskConfig& mask) {
 } // namespace
 
 bool load_arena_experiment_config(const std::string& path, ArenaExperimentConfig& out) {
-	std::ifstream file(path);
+	const std::string abs_path = absolute_config_path(path);
+	std::ifstream file(abs_path);
 	if (!file.is_open()) {
-		log_error("experiment", "Cannot open arena config: " + path);
+		log_error("experiment", "Cannot open arena config: " + abs_path);
 		return false;
 	}
 	try {
@@ -74,13 +96,17 @@ bool load_arena_experiment_config(const std::string& path, ArenaExperimentConfig
 		}
 		if (j.contains("motor")) {
 			const auto& m = j.at("motor");
+			// Dump raw JSON so stale/wrong-file edits are obvious on the lab machine.
+			log_info("experiment", "motor section from " + abs_path + ": " + m.dump());
 			out.motor.can_interface = json_or(m, "can_interface", out.motor.can_interface);
-			out.motor.node_id = json_or(m, "node_id", out.motor.node_id);
+			out.motor.node_id = json_node_id(m, out.motor.node_id);
 			out.motor.pulley_radius_m = json_or(m, "pulley_radius_m", out.motor.pulley_radius_m);
 			out.motor.chain_direction_sign = json_or(m, "chain_direction_sign",
 				out.motor.chain_direction_sign);
 			out.motor.chain_mm_per_motor_turn = json_or(m, "chain_mm_per_motor_turn",
 				out.motor.chain_mm_per_motor_turn);
+		} else {
+			log_error("experiment", "No \"motor\" section in " + abs_path);
 		}
 		if (j.contains("shuttle")) {
 			const auto& s = j.at("shuttle");
@@ -123,10 +149,11 @@ bool load_arena_experiment_config(const std::string& path, ArenaExperimentConfig
 		if (j.contains("trial")) {
 			out.trial_timeout_s = json_or(j.at("trial"), "timeout_s", out.trial_timeout_s);
 		}
-		log_info("experiment", "Loaded arena config: " + path);
+		log_info("experiment", "Loaded arena config: " + abs_path);
 		return true;
 	} catch (const std::exception& e) {
-		log_error("experiment", std::string("Arena config parse error: ") + e.what());
+		log_error("experiment", std::string("Arena config parse error: ") + e.what()
+			+ " (" + abs_path + ")");
 		return false;
 	}
 }

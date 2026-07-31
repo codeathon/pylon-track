@@ -4,12 +4,17 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <thread>
+
+#include <net/if.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 namespace fs = std::filesystem;
 
@@ -22,8 +27,14 @@ SetupStep parse_setup_step(const std::string& name) {
 }
 
 std::string resolve_arena_config_path(const char* argv0, const std::string& user_path) {
+	auto canonicalize = [](const fs::path& p) -> std::string {
+		std::error_code ec;
+		const fs::path abs = fs::weakly_canonical(fs::absolute(p), ec);
+		return ec ? p.string() : abs.string();
+	};
 	if (!user_path.empty()) {
-		return user_path;
+		// Always resolve --config to an absolute path so edits match the file loaded.
+		return canonicalize(user_path);
 	}
 	const fs::path exe_dir = fs::path(argv0 ? argv0 : "").parent_path();
 	const fs::path candidates[] = {
@@ -33,7 +44,7 @@ std::string resolve_arena_config_path(const char* argv0, const std::string& user
 	};
 	for (const auto& path : candidates) {
 		if (fs::exists(path)) {
-			return path.string();
+			return canonicalize(path);
 		}
 	}
 	return {};
@@ -52,14 +63,30 @@ std::string resolve_calib_output_path(const char* argv0, const std::string& user
 }
 
 bool can_interface_up(const std::string& iface) {
-	const fs::path operstate = fs::path("/sys/class/net") / iface / "operstate";
-	std::ifstream file(operstate);
-	if (!file.is_open()) {
+	// Match `ip addr show` administrative UP (IFF_UP).
+	// Do not use operstate — SocketCAN often reports "unknown" while UP.
+	if (iface.empty() || iface.size() >= IFNAMSIZ) {
 		return false;
 	}
-	std::string state;
-	file >> state;
-	return state == "up";
+	const int fd = socket(AF_INET, SOCK_DGRAM, 0);
+	if (fd < 0) {
+		return false;
+	}
+	struct ifreq req;
+	std::memset(&req, 0, sizeof(req));
+	std::snprintf(req.ifr_name, IFNAMSIZ, "%s", iface.c_str());
+	const int rc = ioctl(fd, SIOCGIFFLAGS, &req);
+	close(fd);
+	if (rc < 0) {
+		return false;
+	}
+	return (req.ifr_flags & IFF_UP) != 0;
+}
+
+std::string can_interface_down_hint(const std::string& iface) {
+	return "CAN interface " + iface
+		+ " is not UP (check: ip addr show " + iface + "). "
+		+ "Plug in USB-CAN adapter and re-run make (loads gs_usb + brings iface up).";
 }
 
 void print_setup_banner(const char* step_name, int step_num, int step_total) {

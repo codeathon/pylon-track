@@ -26,16 +26,24 @@ public:
 	MotorStatus status() const override;
 
 	bool enter_velocity_mode(int timeout_ms = 10000);
+	// Runs AXIS_STATE_FULL_CALIBRATION_SEQUENCE over CAN (motor will move).
+	bool run_full_calibration(int timeout_ms = 60000);
 
 	// Raw motor turns/s — used by ODriveCalibrator before chain constants are known.
 	bool set_velocity_turns_s(float turns_s);
 	float read_position_turns() const;
+	// Heartbeat Axis_Error / Axis_State (for setup diagnostics).
+	bool read_axis_state(uint32_t& axis_error, uint32_t& axis_state) const;
 
 	// Chain ↔ motor unit conversions (public for motion planner + calibration).
 	float chain_mps_to_turns_s(float chain_mps) const;
 	float turns_s_to_chain_mps(float turns_s) const;
 	float turns_to_chain_mm(float turns) const;
 	float chain_mm_to_turns(float chain_mm) const;
+	// False when chain_mm_per_motor_turn and pulley_radius_m are both unset/zero
+	// (MotionPlanner would command 0 turns/s and the chain would not move).
+	bool has_valid_chain_scale() const { return mm_per_turn_ > 1e-3f; }
+	float mm_per_turn() const { return mm_per_turn_; }
 
 	const PreyMotorConfig& config() const { return cfg_; }
 

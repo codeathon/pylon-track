@@ -4,6 +4,18 @@
 
 #ifdef PYLON_TRACK_HAS_LJM
 #include <LabJackM.h>
+
+namespace {
+
+// LJM_ErrorToString writes into a caller buffer (void return in current LJM) —
+// treating it as if it returned a string was a bug found via a real build.
+std::string ljm_error_string(int err) {
+	char buf[LJM_MAX_NAME_SIZE] = {};
+	LJM_ErrorToString(err, buf);
+	return buf;
+}
+
+} // namespace
 #endif
 
 LabjackHBridge::LabjackHBridge(const LabjackHBridgeConfig& cfg) : cfg_(cfg) {}
@@ -16,7 +28,7 @@ bool LabjackHBridge::open() {
 	const int err = LJM_OpenS(cfg_.device_type.c_str(),
 		cfg_.connection.c_str(), cfg_.identifier.c_str(), &handle_);
 	if (err != LJME_NOERROR) {
-		log_error("motor", "LabjackHBridge open failed: " + std::string(LJM_ErrorToString(err)));
+		log_error("motor", "LabjackHBridge open failed: " + ljm_error_string(err));
 		handle_ = -1;
 		return false;
 	}
