@@ -32,11 +32,14 @@ public:
 		int chain_direction_sign, float distance_mm, int duration_ms,
 		float max_accel_mps2 = 5.0f, float odrive_vel_limit_turns_s = 10.0f);
 
-	// Runtime profile actually sent to the motor (min-viable floor + fast ramp).
-	// Why: hunt-sim metrics compare encoder feedback to this plan, not the
-	// pure feasibility checklist from plan_distance_mm_in_time.
+	// Runtime profile actually sent to the motor (min-viable floor + spin-up
+	// lead-in + cruise for the requested distance). Hunt-sim / chase execute
+	// this, not the pure feasibility checklist from plan_distance_mm_in_time.
 	static ChainMovePlan runtime_plan_distance_mm_in_time(const PreyMotor& motor,
 		float distance_mm, int duration_ms, float max_accel_mps2 = 5.0f);
+	static ChainMovePlan runtime_plan_distance_mm_in_time(float mm_per_turn,
+		int chain_direction_sign, float distance_mm, int duration_ms,
+		float max_accel_mps2 = 5.0f);
 
 	// Plan + blocking execute. If require_feasible, refuses when not feasible.
 	bool move_distance_mm_in_time(PreyMotor& motor, float distance_mm,
@@ -68,4 +71,5 @@ private:
 
 	ChainMovePlan plan_{};
 	std::chrono::steady_clock::time_point start_time_{};
+	bool need_prepare_{false}; // first tick after start_plan re-asserts mode/limits
 };

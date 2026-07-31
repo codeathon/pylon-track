@@ -31,18 +31,18 @@
 		"chain_mm_per_motor_turn": 660.4
 	},
 	"chase_policy": {
-		"min_chain_speed_mps": 0.05,
-		"max_chain_speed_mps": 0.8,
+		"min_chain_speed_mps": 1.0,
+		"max_chain_speed_mps": 1.4,
 		"cone_half_angle_deg": 45.0,
 		"threat_distance_mm": 800.0,
 		"creep_distance_mm": 2000.0,
 		"flee_threat_threshold": 0.35,
-		"min_flee_mm": 50.0,
-		"max_flee_mm": 400.0,
+		"min_flee_mm": 200.0,
+		"max_flee_mm": 600.0,
 		"flee_gap_gain": 0.25,
 		"flee_speed_gain": 0.15,
-		"flee_accel_mps2": 5.0,
-		"hunt_event_min_interval_ms": 200
+		"flee_accel_mps2": 50.0,
+		"hunt_event_min_interval_ms": 1500
 	},
 	"trial": {
 		"timeout_s": 120.0

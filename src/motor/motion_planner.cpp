@@ -14,29 +14,34 @@ namespace {
 // mm/s, since this is a property of the motor itself, independent of
 // whatever sprocket/chain ratio it happens to be driving.
 constexpr float kMinViableTurnsPerS = 1.5f;
-// Ramp rate used only to reach kMinViableTurnsPerS in the floor case below —
-// separate from (and always faster than) the caller's max_accel_mps2, which
-// that case overrides. Must be fast: crawling up to the floor at a gentle
-// rate spends most of the ramp sitting in the exact low-speed range that
-// doesn't produce torque, so it can stall out before ever reaching a speed
-// that actually turns the chain. 50 m/s^2 matches the --max-accel value
-// that was confirmed on the rig to move the chain.
+// Documented step intent (no linear ramp through the dead zone).
 constexpr float kFloorRampAccelMps2 = 50.0f;
+// Lab: sample_vel reaches ~command ~1.2 s after a step Set_Input_Vel at
+// 1.5–1.8 turns/s. Shorter windows stop during spool-up (~0 mm travel).
+constexpr float kSpinupLeadInS = 1.2f;
 } // namespace
 
-// Build an executable profile with min-viable floor + real (fast) accel ramp.
-// Why: plan_chain_move is a feasibility checklist; runtime also lifts peaks
-// that would sit in the dead zone and ramps quickly so torque actually appears.
 ChainMovePlan MotionPlanner::runtime_plan_distance_mm_in_time(
 	const PreyMotor& motor, float distance_mm, int duration_ms,
 	float max_accel_mps2)
 {
+	return runtime_plan_distance_mm_in_time(motor.mm_per_turn(),
+		motor.config().chain_direction_sign, distance_mm, duration_ms,
+		max_accel_mps2);
+}
+
+// Build an executable profile: min-viable floor + spin-up lead-in + cruise
+// sized for the *requested* distance (not peak × full caller window).
+ChainMovePlan MotionPlanner::runtime_plan_distance_mm_in_time(
+	float mm_per_turn, int chain_direction_sign, float distance_mm,
+	int duration_ms, float max_accel_mps2)
+{
 	ChainMovePlan p;
 	p.distance_mm = distance_mm;
 	p.duration_ms = duration_ms;
-	p.mm_per_turn = motor.mm_per_turn();
-	p.chain_direction_sign = (motor.config().chain_direction_sign < 0) ? -1 : 1;
-	p.scale_ok = motor.has_valid_chain_scale();
+	p.mm_per_turn = mm_per_turn;
+	p.chain_direction_sign = (chain_direction_sign < 0) ? -1 : 1;
+	p.scale_ok = mm_per_turn > 1e-3f;
 	p.timing_ok = duration_ms > 0 && std::fabs(distance_mm) >= 1e-3f;
 	if (!p.scale_ok || !p.timing_ok) {
 		p.feasible = false;
@@ -48,7 +53,6 @@ ChainMovePlan MotionPlanner::runtime_plan_distance_mm_in_time(
 	const float duration_s = static_cast<float>(duration_ms) / 1000.0f;
 	const float accel = (max_accel_mps2 > 0.0f) ? max_accel_mps2 : 0.5f;
 	p.accel_mps2 = accel;
-	p.duration_s = duration_s;
 	p.avg_speed_mps = distance_m / duration_s;
 
 	// Triangle peak covering |x| in T; cap by accel so accel+decel fit the window.
@@ -74,30 +78,34 @@ ChainMovePlan MotionPlanner::runtime_plan_distance_mm_in_time(
 		peak_abs = min_viable_mps;
 	}
 
-	// Why: hold peak for the full requested window (same as --vel-turns-s
-	// --seconds T). A 250 ms cruise on a 500 ms move showed ~0 encoder delta
-	// on the rig despite correct command values; full-window hold matches the
-	// known-good raw path. expected distance = peak * T (may exceed request).
+	// Cruise for requested distance at peak; prepend spin-up so the motor is
+	// actually moving before we count the distance window. Old full-window
+	// hold planned peak×T (e.g. 1981 mm for a 300 mm request).
 	const float accel_time = 0.0f;
-	const float cruise_time = duration_s;
+	const float dist_cruise_s = (peak_abs > 1e-6f)
+		? (std::fabs(distance_m) / peak_abs) : 0.0f;
+	const float cruise_time = kSpinupLeadInS + dist_cruise_s;
+	const float window_s = std::max(duration_s, cruise_time);
 	p.accel_mps2 = kFloorRampAccelMps2;
 
 	p.peak_speed_mps = std::copysign(peak_abs, distance_m);
 	p.accel_time_s = accel_time;
 	p.cruise_time_s = cruise_time;
-	p.duration_s = duration_s;
-	p.duration_ms = duration_ms;
-	p.expected_distance_mm = std::copysign(
-		1000.0f * peak_abs * cruise_time, distance_mm);
+	p.duration_s = window_s;
+	p.duration_ms = static_cast<int>(std::lround(window_s * 1000.0f));
+	// Honest aim: the request (open-loop; spin-up shape makes this approximate).
+	p.expected_distance_mm = distance_mm;
 	p.peak_turns_s = (p.peak_speed_mps * 1000.0f / p.mm_per_turn)
 		* static_cast<float>(p.chain_direction_sign);
 	p.vel_limit_ok = std::fabs(p.peak_turns_s) <= p.odrive_vel_limit_turns_s + 1e-3f;
 	p.feasible = p.scale_ok && p.timing_ok && p.vel_limit_ok
 		&& std::fabs(p.peak_turns_s) + 1e-3f >= kMinViableTurnsPerS;
 	p.summary = "runtime plan peak=" + std::to_string(p.peak_turns_s)
-		+ " turns/s  accel_t=" + std::to_string(accel_time)
-		+ "s  cruise_t=" + std::to_string(cruise_time)
-		+ "s  window=" + std::to_string(duration_ms) + "ms\n";
+		+ " turns/s  spinup=" + std::to_string(kSpinupLeadInS)
+		+ "s  dist_cruise=" + std::to_string(dist_cruise_s)
+		+ "s  hold=" + std::to_string(cruise_time)
+		+ "s  window=" + std::to_string(p.duration_ms) + "ms"
+		+ "  expected=" + std::to_string(p.expected_distance_mm) + " mm\n";
 	return p;
 }
 
@@ -208,6 +216,7 @@ bool MotionPlanner::start_plan(const ChainMovePlan& plan) {
 	}
 	plan_ = plan;
 	cancel_.store(false);
+	need_prepare_ = true;
 	start_time_ = std::chrono::steady_clock::now();
 	active_.store(true);
 	log_info("motor", "start_plan " + std::to_string(static_cast<int>(plan.distance_mm))
@@ -232,6 +241,11 @@ MoveTick MotionPlanner::tick(IMotor& motor) {
 		motor.stop();
 		active_.store(false);
 		return MoveTick::Cancelled;
+	}
+
+	if (need_prepare_) {
+		motor.prepare_velocity_move();
+		need_prepare_ = false;
 	}
 
 	const float elapsed_s = std::chrono::duration<float>(

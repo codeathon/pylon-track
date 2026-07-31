@@ -23,25 +23,34 @@ float clampf(float v, float lo, float hi) {
 	return std::max(lo, std::min(hi, v));
 }
 
-// Build a feasible flee plan; relax duration then distance if needed.
+// Lab spin-up before distance accumulates (matches MotionPlanner runtime).
+constexpr float kFleeSpinupS = 1.2f;
+
+// Build a flee plan the motor can execute: checklist for feasibility, then
+// runtime profile (floor speed + spin-up lead-in) for start_plan/tick.
 ChainMovePlan plan_feasible_flee(float flee_mm, float speed_mps, float accel_mps2,
 	float mm_per_turn, int flee_sign, const ChasePolicyConfig& cfg)
 {
-	const float speed_mmps = std::max(1.0f, std::fabs(speed_mps) * 1000.0f);
+	const float speed_abs = std::max(0.99f, std::fabs(speed_mps));
+	const float speed_mmps = speed_abs * 1000.0f;
 	float dist = flee_mm;
-	int duration_ms = static_cast<int>(std::lround(std::fabs(dist) / speed_mmps * 1000.0f));
-	if (duration_ms < 50) {
-		duration_ms = 50;
+	int duration_ms = static_cast<int>(std::lround(
+		(kFleeSpinupS + std::fabs(dist) / speed_mmps) * 1000.0f));
+	if (duration_ms < 1500) {
+		duration_ms = 1500; // never arm a flee shorter than spin-up + margin
 	}
 
 	for (int attempt = 0; attempt < 8; ++attempt) {
-		ChainMovePlan plan = MotionPlanner::plan_distance_mm_in_time(mm_per_turn,
-			flee_sign, dist, duration_ms, accel_mps2);
-		if (plan.feasible) {
-			return plan;
+		ChainMovePlan checklist = MotionPlanner::plan_distance_mm_in_time(
+			mm_per_turn, flee_sign, dist, duration_ms, accel_mps2);
+		if (checklist.feasible) {
+			// Why: checklist peaks can be << 1.5 turns/s; runtime lifts floor
+			// and sizes hold for distance + spin-up.
+			return MotionPlanner::runtime_plan_distance_mm_in_time(mm_per_turn,
+				flee_sign, dist, duration_ms, accel_mps2);
 		}
 		// Relax: longer time first, then shorter distance.
-		if (!plan.accel_ok || !plan.vel_limit_ok) {
+		if (!checklist.accel_ok || !checklist.vel_limit_ok) {
 			duration_ms = static_cast<int>(duration_ms * 1.5f);
 			if (duration_ms > 10000) {
 				duration_ms = 10000;
@@ -54,8 +63,8 @@ ChainMovePlan plan_feasible_flee(float flee_mm, float speed_mps, float accel_mps
 			}
 		}
 	}
-	return MotionPlanner::plan_distance_mm_in_time(mm_per_turn, flee_sign,
-		dist, duration_ms, accel_mps2);
+	return MotionPlanner::runtime_plan_distance_mm_in_time(mm_per_turn,
+		flee_sign, dist, duration_ms, accel_mps2);
 }
 
 } // namespace
