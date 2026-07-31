@@ -20,4 +20,8 @@ public:
 	// back to apply(velocity_mps). PreyMotor overrides to the same path as
 	// test_odrive_move --vel-turns-s (known-good on the lab rig).
 	virtual bool command_turns_s(float /*turns_s*/) { return false; }
+	// Re-assert velocity mode + limits before a blocking move (no-op default).
+	virtual bool prepare_velocity_move() { return true; }
+	// Non-blocking velocity peek — also drains cyclic encoder RX (FakeMotor: no).
+	virtual bool try_sample_velocity_turns_s(float& /*vel_turns_s*/) { return false; }
 };

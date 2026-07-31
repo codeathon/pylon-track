@@ -281,11 +281,14 @@ bool MotionPlanner::execute_plan(IMotor& motor, const ChainMovePlan& plan)
 	plan_ = plan;
 	cancel_.store(false);
 	active_.store(true);
+	// Re-assert mode/limits after CLOSED_LOOP (matches working direct-spin path).
+	motor.prepare_velocity_move();
 	const auto start = std::chrono::steady_clock::now();
 	int applies = 0;
 	int send_ok = 0;
 	float peak_cmd_turns_s = 0.0f;
 	float last_cmd_turns_s = 0.0f;
+	float last_sample_vel = 0.0f;
 	const float mm_per_turn = std::max(plan_.mm_per_turn, 1e-3f);
 	const float dir = static_cast<float>(
 		(plan_.chain_direction_sign < 0) ? -1 : 1);
@@ -314,6 +317,11 @@ bool MotionPlanner::execute_plan(IMotor& motor, const ChainMovePlan& plan)
 			motor.apply(cmd);
 			++send_ok; // FakeMotor / apply fallback
 		}
+		// Drain cyclic encoder RX so the post-move position read is fresh.
+		float peek = 0.0f;
+		if (motor.try_sample_velocity_turns_s(peek)) {
+			last_sample_vel = peek;
+		}
 		++applies;
 		std::this_thread::sleep_for(std::chrono::milliseconds(20));
 	}
@@ -328,6 +336,8 @@ bool MotionPlanner::execute_plan(IMotor& motor, const ChainMovePlan& plan)
 	log_info("motor", "Move complete (" + std::to_string(applies)
 		+ " commands, send_ok=" + std::to_string(send_ok)
 		+ ", peak_cmd=" + std::to_string(peak_cmd_turns_s)
-		+ " turns/s, last=" + std::to_string(last_cmd_turns_s) + " turns/s)");
+		+ " turns/s, last=" + std::to_string(last_cmd_turns_s)
+		+ " turns/s, sample_vel=" + std::to_string(last_sample_vel)
+		+ " turns/s)");
 	return applies > 0;
 }

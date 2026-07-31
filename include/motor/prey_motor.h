@@ -26,9 +26,11 @@ public:
 	MotorStatus status() const override;
 	bool is_connected() const override;
 	bool command_turns_s(float turns_s) override;
+	bool prepare_velocity_move() override;
+	bool try_sample_velocity_turns_s(float& vel_turns_s) override;
 
 	// Non-blocking / short-timeout encoder sample for telemetry (not the tick path).
-	bool try_sample_velocity_turns_s(float& vel_turns_s, int timeout_ms = 0) const;
+	bool try_sample_velocity_turns_s(float& vel_turns_s, int timeout_ms) const;
 
 	bool enter_velocity_mode(int timeout_ms = 10000);
 	// Runs AXIS_STATE_FULL_CALIBRATION_SEQUENCE over CAN (motor will move).
@@ -39,7 +41,7 @@ public:
 	float read_position_turns() const;
 	// Heartbeat Axis_Error / Axis_State (for setup diagnostics).
 	bool read_axis_state(uint32_t& axis_error, uint32_t& axis_state) const;
-	// Re-send velocity + limits + CLOSED_LOOP (before a spin if tracking is dead).
+	// Re-send velocity mode + limits (before a spin if tracking looks dead).
 	bool assert_velocity_control();
 	bool try_get_iq(float& iq_setpoint, float& iq_measured, int timeout_ms = 0) const;
 	bool try_get_active_errors(uint32_t& active_errors, uint32_t& disarm_reason,

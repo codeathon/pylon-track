@@ -249,13 +249,24 @@ bool ODriveCan::get_encoder_estimates(float& pos_turns, float& vel_turns_s,
 	int timeout_ms) const
 {
 	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
-	// Cyclic by default (~10 ms); listen rather than request.
+	// Cyclic by default (~10 ms). Drain to the *newest* frame — returning the
+	// oldest queued estimate after a long Set_Input_Vel loop (no mid-move
+	// status reads) made --via-planner report ~0 encoder delta while the
+	// chain had actually moved (direct spin drained RX every tick and looked OK).
 	uint8_t buf[8] = {};
+	float pos = 0.0f;
+	float vel = 0.0f;
 	if (!recv_frame(CMD_GET_ENCODER_ESTIMATES, buf, sizeof(buf), timeout_ms)) {
 		return false;
 	}
-	unpack_float_le(buf, pos_turns);
-	unpack_float_le(buf + 4, vel_turns_s);
+	unpack_float_le(buf, pos);
+	unpack_float_le(buf + 4, vel);
+	while (recv_frame(CMD_GET_ENCODER_ESTIMATES, buf, sizeof(buf), /*timeout_ms=*/0)) {
+		unpack_float_le(buf, pos);
+		unpack_float_le(buf + 4, vel);
+	}
+	pos_turns = pos;
+	vel_turns_s = vel;
 	return true;
 }
 

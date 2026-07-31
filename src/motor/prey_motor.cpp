@@ -187,6 +187,14 @@ bool PreyMotor::command_turns_s(float turns_s) {
 	return set_velocity_turns_s(turns_s);
 }
 
+bool PreyMotor::prepare_velocity_move() {
+	return assert_velocity_control();
+}
+
+bool PreyMotor::try_sample_velocity_turns_s(float& vel_turns_s) {
+	return try_sample_velocity_turns_s(vel_turns_s, /*timeout_ms=*/0);
+}
+
 float PreyMotor::read_position_turns() const {
 	refresh_status();
 	std::lock_guard<std::mutex> lock(status_mutex_);

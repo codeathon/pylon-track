@@ -301,9 +301,9 @@ int main(int argc, char** argv) {
 		g_motor = nullptr;
 		if (std::fabs(delta) < 0.1f) {
 			log_error("test",
-				"Motor did not spin — ODrive velocity control/calibration issue "
-				"(not MotionPlanner). Try GUI closed-loop at input_vel=1, or "
-				"--seconds 5");
+				"Encoder barely moved — this rig needs ~1–1.5 s to spool up "
+				"(try --seconds 2). If 2s also fails, check GUI closed-loop "
+				"input_vel=1");
 			return 1;
 		}
 		log_info("test", "Raw spin complete");
