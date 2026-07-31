@@ -23,8 +23,9 @@ OpTimer::~OpTimer() {
 void record_op_duration(SessionRecorder* recorder, const char* op,
 	int64_t host_time_ns, int64_t duration_us, const char* detail)
 {
-	if (!recorder || !recorder_->is_open()) {
+	// Why: this is a free function — use the parameter, not OpTimer::recorder_.
+	if (!recorder || !recorder->is_open()) {
 		return;
 	}
-	recorder_->log_op_timing(host_time_ns, op, duration_us, detail ? detail : "");
+	recorder->log_op_timing(host_time_ns, op, duration_us, detail ? detail : "");
 }
