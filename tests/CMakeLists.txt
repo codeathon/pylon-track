@@ -13,6 +13,8 @@ set(CALIB_PROD_SOURCES
 	${CMAKE_SOURCE_DIR}/src/log/logger.cpp
 	${CMAKE_SOURCE_DIR}/src/experiment/trial_state.cpp
 	${CMAKE_SOURCE_DIR}/src/experiment/session_recorder.cpp
+	# Why: CameraTrackingService logs grab/pipeline latency via record_op_duration.
+	${CMAKE_SOURCE_DIR}/src/experiment/op_timing.cpp
 	${CMAKE_SOURCE_DIR}/src/vision/camera_frame.cpp
 	${CMAKE_SOURCE_DIR}/src/vision/tracking_frame.cpp
 	${CMAKE_SOURCE_DIR}/src/vision/arena_mask.cpp
