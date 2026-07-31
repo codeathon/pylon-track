@@ -28,6 +28,8 @@ public:
 	bool command_turns_s(float turns_s) override;
 	bool prepare_velocity_move() override;
 	bool try_sample_velocity_turns_s(float& vel_turns_s) override;
+	bool try_sample_encoder(float& pos_turns, float& vel_turns_s,
+		int timeout_ms = 0) override;
 
 	// Non-blocking / short-timeout encoder sample for telemetry (not the tick path).
 	bool try_sample_velocity_turns_s(float& vel_turns_s, int timeout_ms) const;

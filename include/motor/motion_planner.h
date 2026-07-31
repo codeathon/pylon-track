@@ -64,6 +64,11 @@ public:
 
 private:
 	float sample_speed_mps(float elapsed_s) const;
+	// Capture encoder start; enables closed-loop stop when true.
+	bool arm_closed_loop_start(IMotor& motor, int timeout_ms);
+	// True when traveled (+ coast lead) reaches |plan_.distance_mm|.
+	bool closed_loop_distance_reached(IMotor& motor, float& traveled_mm,
+		float& sample_vel_turns_s) const;
 
 	std::atomic<bool> busy_{false};   // blocking execute_plan in progress
 	std::atomic<bool> active_{false}; // non-blocking start_plan in progress
@@ -72,4 +77,7 @@ private:
 	ChainMovePlan plan_{};
 	std::chrono::steady_clock::time_point start_time_{};
 	bool need_prepare_{false}; // first tick after start_plan re-asserts mode/limits
+	bool closed_loop_{false};  // encoder start captured — stop on distance
+	float start_pos_turns_{0.0f};
+	float last_traveled_mm_{0.0f};
 };

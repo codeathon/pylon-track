@@ -43,6 +43,7 @@ public:
 		if (cmd.mode == MotorMode::Velocity) {
 			last_velocity_mps = cmd.velocity_mps;
 			velocity_samples.push_back(cmd.velocity_mps);
+			integrate_from_cmd(cmd.velocity_mps);
 		}
 	}
 	void stop() override {
@@ -58,8 +59,32 @@ public:
 		return status_;
 	}
 	bool is_connected() const override { return status_.connected; }
+	bool command_turns_s(float turns_s) override {
+		// Mirror PreyMotor path used by execute_plan/tick.
+		const float mps = turns_s * mm_per_turn_ / 1000.0f;
+		MotorCommand cmd;
+		cmd.mode = MotorMode::Velocity;
+		cmd.velocity_mps = mps;
+		apply(cmd);
+		return true;
+	}
+	bool try_sample_encoder(float& pos_turns, float& vel_turns_s,
+		int /*timeout_ms*/) override
+	{
+		if (!encoder_sim_) {
+			return false;
+		}
+		pos_turns = pos_turns_;
+		vel_turns_s = last_velocity_mps * 1000.0f / mm_per_turn_;
+		return true;
+	}
 
 	void set_connected(bool c) { status_.connected = c; }
+	void enable_encoder_sim(float mm_per_turn) {
+		encoder_sim_ = true;
+		mm_per_turn_ = mm_per_turn;
+		pos_turns_ = 0.0f;
+	}
 
 	MotorStatus status_{};
 	MotorCommand last_cmd{};
@@ -69,6 +94,27 @@ public:
 	int estop_count = 0;
 	mutable int status_count = 0;
 	std::vector<float> velocity_samples;
+	float pos_turns_ = 0.0f;
+
+private:
+	// Why: closed-loop tests need position to advance with commanded velocity.
+	void integrate_from_cmd(float velocity_mps) {
+		if (!encoder_sim_) {
+			return;
+		}
+		const auto now = std::chrono::steady_clock::now();
+		if (have_last_cmd_time_) {
+			const float dt = std::chrono::duration<float>(now - last_cmd_time_).count();
+			pos_turns_ += (velocity_mps * 1000.0f / mm_per_turn_) * dt;
+		}
+		last_cmd_time_ = now;
+		have_last_cmd_time_ = true;
+	}
+
+	bool encoder_sim_ = false;
+	float mm_per_turn_ = 157.0f;
+	bool have_last_cmd_time_ = false;
+	std::chrono::steady_clock::time_point last_cmd_time_{};
 };
 
 ChainMovePlan feasible_plan(float distance_mm = 100.0f, int duration_ms = 500) {
@@ -268,6 +314,28 @@ void test_tick_does_not_call_status() {
 	expect(motor.apply_count > 0, "applied");
 }
 
+void test_closed_loop_stops_on_distance() {
+	std::cout << "closed-loop execute_plan stops near target distance\n";
+	MotionPlanner planner;
+	FakeMotor motor;
+	motor.connect();
+	motor.enable_encoder_sim(157.0f);
+
+	// Long timeout window; encoder should cut the move early at ~100 mm.
+	const ChainMovePlan p = MotionPlanner::runtime_plan_distance_mm_in_time(
+		157.0f, 1, 100.0f, 5000, 50.0f);
+	expect(p.feasible, "runtime_feasible");
+	const auto t0 = std::chrono::steady_clock::now();
+	expect(planner.execute_plan(motor, p), "execute_ok");
+	const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+		std::chrono::steady_clock::now() - t0).count();
+	const float traveled_mm = motor.pos_turns_ * 157.0f;
+	expect(traveled_mm > 50.0f, "moved_significantly");
+	expect(traveled_mm < 160.0f, "not_huge_overshoot");
+	expect(elapsed_ms < 4000, "stopped_before_full_timeout");
+	expect(motor.stop_count >= 1, "stopped");
+}
+
 } // namespace
 
 int main() {
@@ -284,6 +352,7 @@ int main() {
 	test_execute_plan_blocking();
 	test_signed_distance_peak_sign();
 	test_tick_does_not_call_status();
+	test_closed_loop_stops_on_distance();
 
 	std::cout << "=== " << (g_failures == 0 ? "ALL PASSED" : "FAILURES")
 		<< " (" << g_failures << ") ===\n";

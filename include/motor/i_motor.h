@@ -24,4 +24,8 @@ public:
 	virtual bool prepare_velocity_move() { return true; }
 	// Non-blocking velocity peek — also drains cyclic encoder RX (FakeMotor: no).
 	virtual bool try_sample_velocity_turns_s(float& /*vel_turns_s*/) { return false; }
+	// Encoder sample for closed-loop distance stop. timeout_ms=0 → non-blocking.
+	// Default unsupported → MotionPlanner falls back to open-loop timed cruise.
+	virtual bool try_sample_encoder(float& /*pos_turns*/, float& /*vel_turns_s*/,
+		int /*timeout_ms*/ = 0) { return false; }
 };

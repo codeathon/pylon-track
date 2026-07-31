@@ -140,7 +140,29 @@ bool PreyMotor::is_connected() const {
 	return status_.connected;
 }
 
+bool PreyMotor::try_sample_encoder(float& pos_turns, float& vel_turns_s,
+	int timeout_ms)
+{
+	if (!is_connected()) {
+		return false;
+	}
+	float pos = 0.0f;
+	float vel = 0.0f;
+	if (!can_.get_encoder_estimates(pos, vel, timeout_ms)) {
+		return false;
+	}
+	std::lock_guard<std::mutex> lock(status_mutex_);
+	status_.position_turns = pos;
+	status_.velocity_turns_s = vel;
+	status_.chain_position_mm = turns_to_chain_mm(pos);
+	status_.chain_velocity_mps = turns_s_to_chain_mps(vel);
+	pos_turns = pos;
+	vel_turns_s = vel;
+	return true;
+}
+
 bool PreyMotor::try_sample_velocity_turns_s(float& vel_turns_s, int timeout_ms) const {
+	// const path for calibrator/hunt_sim — same CAN read, updates cached status.
 	if (!is_connected()) {
 		return false;
 	}
