@@ -8,6 +8,18 @@
 #include "motor/prey_motor.h"
 #include "log/logger.h"
 
+namespace {
+// Below this the motor doesn't reliably produce enough torque to actually
+// turn (observed on the rig) — a profile whose peak never clears this speed
+// commands motion that never happens. Native units (turns/s), not chain
+// mm/s, since this is a property of the motor itself, independent of
+// whatever sprocket/chain ratio it happens to be driving.
+constexpr float kMinViableTurnsPerS = 0.5f;
+// Ramp rate used only to reach kMinViableTurnsPerS in the floor case below —
+// separate from the caller's max_accel_mps2, which that case overrides.
+constexpr float kFloorRampAccelMps2 = 2.0f;
+} // namespace
+
 MotionPlanner::~MotionPlanner() {
 	cancel();
 }
@@ -65,9 +77,28 @@ bool MotionPlanner::move_distance_mm_in_time(PreyMotor& motor, float distance_mm
 			+ " m/s — raise max_accel_mps2 for short/fast moves");
 		peak_abs = peak_accel_cap;
 	}
+	float accel_time = (peak_abs > 1e-6f) ? (peak_abs / accel) : 0.0f;
+	float cruise_time = std::max(0.0f, duration_s - 2.0f * accel_time);
+
+	// Below this the motor doesn't reliably move at all (kMinViableTurnsPerS)
+	// — riding out duration_s at a peak that never clears the floor commands
+	// motion that never happens. Ramp to the floor speed instead and cruise
+	// only as long as needed to cover the full requested distance, so the
+	// move finishes early rather than silently not moving.
+	const float min_viable_mps = kMinViableTurnsPerS * motor.mm_per_turn() / 1000.0f;
+	if (peak_abs > 1e-6f && peak_abs < min_viable_mps) {
+		log_info("motor", "Target peak " + std::to_string(peak_abs)
+			+ " m/s is below this motor's minimum viable speed (~"
+			+ std::to_string(min_viable_mps) + " m/s / "
+			+ std::to_string(kMinViableTurnsPerS) + " turns/s) — moving at "
+			"the floor speed and finishing early instead of commanding a "
+			"speed the motor can't sustain");
+		peak_abs = min_viable_mps;
+		accel_time = peak_abs / kFloorRampAccelMps2;
+		cruise_time = std::max(0.0f, std::fabs(distance_m) / peak_abs - accel_time);
+	}
+
 	const float peak_speed = std::copysign(peak_abs, distance_m);
-	const float accel_time = (peak_abs > 1e-6f) ? (peak_abs / accel) : 0.0f;
-	const float cruise_time = std::max(0.0f, duration_s - 2.0f * accel_time);
 
 	const auto start = std::chrono::steady_clock::now();
 	float elapsed_s = 0.0f;

@@ -7,7 +7,7 @@
 //
 // Usage:
 //   test_distance_moving --distance-mm <mm> --duration-s <s>
-//       [--config <arena_experiment.json>] [--accel <mps2>] [--verbose]
+//       [--config <arena_experiment.json>] [--max-accel <mps2>] [--verbose]
 //
 // Example: move 500mm forward over 2 seconds
 //   test_distance_moving --distance-mm 500 --duration-s 2
@@ -39,7 +39,7 @@ void signal_handler(int) {
 struct Args {
 	std::optional<float> distance_mm;
 	std::optional<float> duration_s;
-	float accel_mps2 = 0.5f;
+	float max_accel_mps2 = 0.5f;
 	std::string config_path;
 	bool verbose = false;
 };
@@ -47,7 +47,7 @@ struct Args {
 void print_usage() {
 	std::cerr <<
 		"Usage: test_distance_moving --distance-mm <mm> --duration-s <s>\n"
-		"           [--config <arena_experiment.json>] [--accel <mps2>] [--verbose]\n"
+		"           [--config <arena_experiment.json>] [--max-accel <mps2>] [--verbose]\n"
 		"\n"
 		"  Moves the prey chain motor the given signed distance (mm) over the\n"
 		"  given duration (s) using a trapezoidal velocity profile, then reports\n"
@@ -61,8 +61,8 @@ bool parse_args(int argc, char** argv, Args& args) {
 				args.distance_mm = std::stof(argv[++i]);
 			} else if (std::strcmp(argv[i], "--duration-s") == 0 && i + 1 < argc) {
 				args.duration_s = std::stof(argv[++i]);
-			} else if (std::strcmp(argv[i], "--accel") == 0 && i + 1 < argc) {
-				args.accel_mps2 = std::stof(argv[++i]);
+			} else if (std::strcmp(argv[i], "--max-accel") == 0 && i + 1 < argc) {
+				args.max_accel_mps2 = std::stof(argv[++i]);
 			} else if (std::strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
 				args.config_path = argv[++i];
 			} else if (std::strcmp(argv[i], "--verbose") == 0) {
@@ -139,10 +139,10 @@ int main(int argc, char** argv) {
 	const int duration_ms = static_cast<int>(*args.duration_s * 1000.0f);
 
 	std::cout << "Moving " << *args.distance_mm << " mm over " << *args.duration_s
-		<< " s (max accel " << args.accel_mps2 << " m/s^2)... Ctrl-C to abort.\n";
+		<< " s (max accel " << args.max_accel_mps2 << " m/s^2)... Ctrl-C to abort.\n";
 
 	const bool completed = planner.move_distance_mm_in_time(
-		motor, *args.distance_mm, duration_ms, args.accel_mps2);
+		motor, *args.distance_mm, duration_ms, args.max_accel_mps2);
 
 	const float pos_after_turns = motor.read_position_turns();
 	const float actual_mm = motor.turns_to_chain_mm(pos_after_turns - pos_before_turns);
@@ -150,7 +150,7 @@ int main(int argc, char** argv) {
 	std::cout << (completed ? "Move complete" : "Move cancelled") << '\n'
 		<< "Requested: " << *args.distance_mm << " mm\n"
 		<< "Actual:    " << actual_mm << " mm\n"
-		<< "Error:     " << (actual_mm - *args.distance_mm) << " mm\n";
+		<< "Error:     " << (*args.distance_mm - actual_mm) << " mm\n";
 
 	return completed ? 0 : 1;
 }
