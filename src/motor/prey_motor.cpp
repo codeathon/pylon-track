@@ -26,6 +26,7 @@ bool PreyMotor::connect() {
 		return false;
 	}
 	status_.connected = true;
+	have_last_cmd_ = false;
 	// Autobaud drives stay silent until they see host traffic — beacon first.
 	status_.heartbeat_ok = can_.wake_autobaud(3000);
 	refresh_status();
@@ -61,6 +62,37 @@ float PreyMotor::chain_mm_to_turns(float chain_mm) const {
 		return 0.0f;
 	}
 	return (chain_mm / mm_per_turn_) * static_cast<float>(cfg_.chain_direction_sign);
+}
+
+float PreyMotor::compute_torque_ff_nm(float target_turns_s) {
+	const auto now = std::chrono::steady_clock::now();
+	const bool calibrated = cfg_.chain_inertia_kg_m2 > 0.0f;
+	float torque_ff = 0.0f;
+	if (calibrated && have_last_cmd_) {
+		const float dt = std::chrono::duration<float>(now - last_cmd_time_).count();
+		// Why: a gap this long means the motor was idle/stopped between
+		// commands — a dt-based accel estimate across it would be fictitious,
+		// so skip feed-forward for this one command instead of spiking torque_ff.
+		constexpr float kMaxValidDtS = 0.15f;
+		if (dt > 1e-4f && dt <= kMaxValidDtS) {
+			const float accel_turns_s2 = (target_turns_s - last_cmd_turns_s_) / dt;
+			const float alpha_rad = accel_turns_s2 * kTwoPi;
+			const float omega_rad = target_turns_s * kTwoPi;
+			float sign_omega = 0.0f;
+			if (omega_rad > 1e-3f) {
+				sign_omega = 1.0f;
+			} else if (omega_rad < -1e-3f) {
+				sign_omega = -1.0f;
+			}
+			torque_ff = cfg_.chain_inertia_kg_m2 * alpha_rad
+				+ cfg_.chain_viscous_friction_nm_s_per_rad * omega_rad
+				+ cfg_.chain_static_friction_nm * sign_omega;
+		}
+	}
+	last_cmd_turns_s_ = target_turns_s;
+	last_cmd_time_ = now;
+	have_last_cmd_ = true;
+	return torque_ff;
 }
 
 void PreyMotor::refresh_status() const {
@@ -102,9 +134,10 @@ void PreyMotor::apply(const MotorCommand& cmd) {
 			return;
 		}
 		const float turns_s = chain_mps_to_turns_s(cmd.velocity_mps);
+		const float torque_ff = compute_torque_ff_nm(turns_s);
 		// No refresh_status here — MotionPlanner runs ~50 Hz and must keep
 		// Set_Input_Vel flowing faster than the ODrive watchdog.
-		if (!can_.set_input_velocity(turns_s, 0.0f)) {
+		if (!can_.set_input_velocity(turns_s, torque_ff)) {
 			log_error("motor", "Set_Input_Vel failed ("
 				+ std::to_string(turns_s) + " turns/s)");
 		}
@@ -116,6 +149,9 @@ void PreyMotor::stop() {
 		return;
 	}
 	can_.set_input_velocity(0.0f, 0.0f);
+	// Why: next command starts a fresh feed-forward window — a dt-based accel
+	// estimate spanning this stop would be fictitious.
+	have_last_cmd_ = false;
 	refresh_status();
 }
 
@@ -125,6 +161,7 @@ void PreyMotor::estop() {
 	}
 	can_.send_estop();
 	can_.set_input_velocity(0.0f, 0.0f);
+	have_last_cmd_ = false;
 	refresh_status();
 }
 
@@ -201,7 +238,8 @@ bool PreyMotor::set_velocity_turns_s(float turns_s) {
 		return false;
 	}
 	// Skip refresh on the command path so spin loops can feed the watchdog.
-	return can_.set_input_velocity(turns_s, 0.0f);
+	const float torque_ff = compute_torque_ff_nm(turns_s);
+	return can_.set_input_velocity(turns_s, torque_ff);
 }
 
 bool PreyMotor::command_turns_s(float turns_s) {

@@ -116,6 +116,15 @@ bool load_arena_experiment_config(const std::string& path, ArenaExperimentConfig
 				out.motor.chain_direction_sign);
 			out.motor.chain_mm_per_motor_turn = json_or(m, "chain_mm_per_motor_turn",
 				out.motor.chain_mm_per_motor_turn);
+			out.motor.chain_inertia_kg_m2 = json_or(m, "chain_inertia_kg_m2",
+				out.motor.chain_inertia_kg_m2);
+			out.motor.chain_viscous_friction_nm_s_per_rad = json_or(m,
+				"chain_viscous_friction_nm_s_per_rad",
+				out.motor.chain_viscous_friction_nm_s_per_rad);
+			out.motor.chain_static_friction_nm = json_or(m, "chain_static_friction_nm",
+				out.motor.chain_static_friction_nm);
+			out.motor.torque_constant_nm_per_a = json_or(m, "torque_constant_nm_per_a",
+				out.motor.torque_constant_nm_per_a);
 		} else {
 			log_error("experiment", "No \"motor\" section in " + abs_path);
 		}
@@ -262,5 +271,9 @@ bool save_motor_calibration(const std::string& path, const MotorConfig& motor) {
 	m["pulley_radius_m"] = motor.pulley_radius_m;
 	m["chain_direction_sign"] = motor.chain_direction_sign;
 	m["chain_mm_per_motor_turn"] = motor.chain_mm_per_motor_turn;
+	m["chain_inertia_kg_m2"] = motor.chain_inertia_kg_m2;
+	m["chain_viscous_friction_nm_s_per_rad"] = motor.chain_viscous_friction_nm_s_per_rad;
+	m["chain_static_friction_nm"] = motor.chain_static_friction_nm;
+	m["torque_constant_nm_per_a"] = motor.torque_constant_nm_per_a;
 	return merge_write_json_section(path, "motor", m);
 }

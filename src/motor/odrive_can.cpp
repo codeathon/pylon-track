@@ -65,7 +65,7 @@ std::string hex_u32(uint32_t value) {
 }
 // Safe defaults so a GUI left at vel_limit=0 cannot silently clamp Set_Input_Vel.
 constexpr float kDefaultVelLimitTurnsS = 10.0f;
-constexpr float kDefaultCurrentLimitA = 40.0f;
+constexpr float kDefaultCurrentLimitA = 60.0f;
 
 void pack_float_le(float value, uint8_t* out) {
 	std::memcpy(out, &value, sizeof(float));

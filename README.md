@@ -282,6 +282,13 @@ Sweep after hardware changes:
 ./bin/test_hunt_sim --config config/arena_experiment.json --duration-s 120 --max-accel 50
 ```
 
+Calibrate chain inertia/friction (feeds `PreyMotor`'s `torque_ff`; chain must
+be a closed loop — see [tests/README.md](tests/README.md#test_motor_inertia_calibration--chain-motor-inertiafriction-calibration)):
+
+```bash
+./bin/test_motor_inertia_calibration --config config/arena_experiment.json --write-config
+```
+
 ### Arena config (`config/arena_experiment.json`)
 
 | Section | Key fields | Purpose |

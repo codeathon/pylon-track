@@ -128,7 +128,7 @@ inline ChainMovePlan plan_chain_move(float distance_mm, int duration_ms,
 	p.summary += "\nODrive must also have (not in JSON):\n";
 	p.summary += "  - motor+encoder calibration saved (pre_calibrated)\n";
 	p.summary += "  - closed-loop + VELOCITY control (app sets over CAN)\n";
-	p.summary += "  - vel_limit / current_limit high enough (app Set_Limits 10 / 40)\n";
+	p.summary += "  - vel_limit / current_limit high enough (app Set_Limits 10 / 60)\n";
 	p.summary += "  - watchdog fed (app re-sends Set_Input_Vel ~50 Hz)\n";
 	p.summary += p.feasible ? "\n[ok] PLAN FEASIBLE\n" : "\n[!!] PLAN NOT FEASIBLE\n";
 	return p;

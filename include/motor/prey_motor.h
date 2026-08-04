@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <mutex>
 #include <string>
 #include "motor/i_motor.h"
@@ -13,6 +14,16 @@ struct PreyMotorConfig {
 	int chain_direction_sign = 1;
 	// Optional measured constant; when > 0 overrides pulley_radius for conversions.
 	float chain_mm_per_motor_turn = 0.0f;
+
+	// Chain inertia/friction model (test_motor_inertia_calibration output) used
+	// as Set_Input_Vel torque feed-forward. chain_inertia_kg_m2 <= 0 means
+	// "uncalibrated" — feed-forward is skipped and torque_ff stays 0, same as
+	// before this model existed.
+	float chain_inertia_kg_m2 = 0.0f;
+	float chain_viscous_friction_nm_s_per_rad = 0.0f;
+	float chain_static_friction_nm = 0.0f;
+	// ODrive motor torque constant (odrivetool: axis0.motor.config.torque_constant).
+	float torque_constant_nm_per_a = 0.0827f;
 };
 
 class PreyMotor : public IMotor {
@@ -71,5 +82,19 @@ private:
 	mutable std::mutex status_mutex_;
 	float mm_per_turn_ = 0.0f;
 
+	// Torque feed-forward state — last commanded (not measured) velocity/time,
+	// used to estimate the commanded angular accel between successive
+	// Set_Input_Vel calls. Only ever touched from the single thread that drives
+	// this motor's velocity commands (ChaseController's control loop or a
+	// test's main thread), so no lock needed.
+	float last_cmd_turns_s_ = 0.0f;
+	std::chrono::steady_clock::time_point last_cmd_time_{};
+	bool have_last_cmd_ = false;
+
 	void refresh_status() const;
+	// torque_ff (N*m) for a Set_Input_Vel(target_turns_s) call, from the
+	// chain_inertia_kg_m2/chain_viscous_friction_nm_s_per_rad/
+	// chain_static_friction_nm model. Returns 0 when uncalibrated, on the
+	// first command, or after a stale gap (motor was idle/stopped).
+	float compute_torque_ff_nm(float target_turns_s);
 };

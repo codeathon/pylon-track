@@ -14,6 +14,7 @@ All outputs go to `tests/output/<suite>/<timestamp>_<label>/` (gitignored).
 | `test_param_sweep` | Parameter sweeps + resolution / binning / compound camera presets |
 | `test_latency` | Two-object tracking benchmark: speeds, centroids, distance, latency |
 | `test_mount_height` | Per-height resolution check: annotated stills + the latency benchmark |
+| `test_motor_inertia_calibration` | Motor-only (no camera): calibrates chain inertia/friction from a step-response sweep |
 
 ---
 
@@ -457,6 +458,113 @@ Mind that raising the camera trades resolution for coverage:
 | 2.0 m | 1.73 | 24×24 mm object |
 
 ---
+
+## `test_motor_inertia_calibration` — chain motor inertia/friction calibration
+
+Motor-only (no camera, Pylon, or LabJack needed) — same linkage as
+`test_distance_moving`/`test_hunt_sim`. Requires the ODrive CAN chain motor
+connected and `can0` up. **The chain must be a closed loop (no physical
+end)** — this test spins continuously for several minutes and does not track
+position, unlike `test_odrive_move`/`test_hunt_sim` which bound every move by
+distance.
+
+### What it does
+
+Commands a sweep of step velocity changes and times how long the motor takes
+to reach each one, then fits a physical model relating motor torque to
+acceleration, speed, and static friction. The result is `chain_inertia_kg_m2`,
+`chain_viscous_friction_nm_s_per_rad`, and `chain_static_friction_nm` — three
+numbers that let `PreyMotor` push a feed-forward torque (`Set_Input_Vel`'s
+`torque_ff`, previously always 0) alongside every velocity command, so the
+ODrive's own current-limited PI loop has less error to close and spins up
+faster. Feed-forward is a no-op ( `torque_ff = 0`) until these values are
+non-zero in `config/arena_experiment.json`'s `motor` section — running this
+test does not change motor behavior unless you save its output there
+(`--write-config`) or paste it in by hand.
+
+### How it works — two trials, then two regressions
+
+1. **Trial A (cumulative ramp):** starting from a stop, step to `--rps-min`
+   (default 1.0 turns/s), time how long it takes to settle, hold there for
+   `--hold-s` (default 2s), then step to the *next* target from wherever the
+   motor already is (e.g. 1.0 → 1.2 → 1.4 → ...), repeating up to `--rps-max`
+   (default 6.0) in `--rps-step` increments (default 0.2). Then decelerate
+   from the top target back to 0 (also timed) and dwell `--hold-s` at 0.
+2. **Trial B (reset every step):** for every target in the same list, spin up
+   from a full stop (timed), hold, spin back down to 0 (timed), hold, then
+   move to the next target — always starting from 0. This isolates each
+   step's response instead of chaining them, and (unlike Trial A) times a
+   deceleration for every single step, not just once at the end.
+3. Both trials command the target continuously (feeding the ODrive watchdog)
+   and sample velocity + motor current (`Get_Iq`) at `--sample-hz` (default
+   100 Hz) throughout — during the ramp *and* the post-settle dwell — logging
+   every sample, not just per-step timestamps.
+4. **Timing cross-check regression:** `settle_time_s ≈ a + b·|Δturns/s|`, a
+   simple least-squares fit across every step from both trials. Printed for
+   sanity-checking the dynamic fit below, not used for the saved calibration.
+5. **Dynamic regression (the actual calibration):** every consecutive sample
+   pair within a step gives one data point — measured torque
+   (`Iq_measured × --torque-constant`) against the discrete angular
+   acceleration and velocity between those two samples. Least squares across
+   every such point from both trials (not just step endpoints) fits
+   `torque = J·α + B·ω + τ_c·sign(ω)` for inertia `J`, viscous friction `B`,
+   and static/Coulomb friction `τ_c`. Reports R² alongside the fit.
+
+"Reached" a target means velocity stayed within `--settle-tol` (default
+±0.05 turns/s) continuously for `--settle-hold-s` (default 0.2 s) — a single
+in-band sample doesn't count, to reject overshoot bouncing through the band.
+
+### Steps to run it
+
+```bash
+cd build
+./bin/test_motor_inertia_calibration --config ../config/arena_experiment.json
+```
+
+Add `--write-config` to save the fitted values directly into the config's
+`motor` section (merge-write — other sections are untouched) instead of
+copy-pasting the printed block yourself:
+
+```bash
+./bin/test_motor_inertia_calibration --config ../config/arena_experiment.json --write-config
+```
+
+Ctrl-C aborts and stops the motor at any point; partial samples/steps are
+still written to CSV but no regression is run on an aborted sweep.
+
+### Variables (CLI flags)
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--config <path>` | resolved beside binary / `config/` | `arena_experiment.json` (needs `motor.chain_mm_per_motor_turn` or `pulley_radius_m`, and `motor.can_interface`) |
+| `--rps-min <turns/s>` | `1.0` | First (lowest) sweep target |
+| `--rps-max <turns/s>` | `6.0` | Last (highest) sweep target |
+| `--rps-step <turns/s>` | `0.2` | Increment between targets |
+| `--hold-s <s>` | `2.0` | Dwell time after settling at each target (and at 0) |
+| `--settle-tol <turns/s>` | `0.05` | ± band around the target that counts as "reached" |
+| `--settle-hold-s <s>` | `0.2` | Time the velocity must stay inside the band before it's called settled |
+| `--sample-hz <Hz>` | `100` | Velocity/Iq sampling (and command re-send) rate during ramps and dwells |
+| `--torque-constant <N·m/A>` | `0.0827` | ODrive motor torque constant (`odrivetool`: `axis0.motor.config.torque_constant`) used to convert `Iq_measured` into torque |
+| `--max-step-wait-s <s>` | `10` | Abort the whole sweep if a single step hasn't settled by this long (stall/fault guard) |
+| `--output <dir>` | `tests/output` | Root for `motor_inertia_calibration/<timestamp>/{samples,steps}.csv` |
+| `--write-config` | off | Merge-write the fitted values into `--config`'s `motor` section |
+| `--verbose` | off | Debug logging |
+
+### Output
+
+- `samples.csv` — every logged sample: `t_s, trial, step_index, direction,
+  target_turns_s, measured_turns_s, iq_measured_a, iq_valid`.
+- `steps.csv` — one row per up/down transition: `trial, step_index,
+  direction, from_turns_s, to_turns_s, delta_turns_s, settle_time_s, ok`.
+- Printed summary: the timing cross-check fit, then the dynamic fit's R² and
+  the three calibrated values, formatted ready to paste into
+  `config/arena_experiment.json`'s `motor` section.
+
+If fewer than half the `Get_Iq` reads succeed, the tool warns that cyclic Iq
+broadcast likely isn't enabled in the ODrive's CAN config and the dynamic fit
+(not the timing cross-check) should be treated as unreliable until that's
+fixed in `odrivetool`. A fitted `chain_inertia_kg_m2 <= 0` is flagged the same
+way — physically impossible, so the run's numbers shouldn't be trusted as-is.
 
 ## Basler calibration notes
 
