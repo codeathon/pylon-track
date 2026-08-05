@@ -90,18 +90,15 @@ struct Args {
 	// to -1 (flipped) for this rig; pass 1 if it's ever rewired/reconfigured
 	// so Iq agrees with the encoder again.
 	float iq_sign = -1.0f;
-	// Kick-tuning phase (runs before Trial A): finds a breakaway-kick boost
-	// that actually works on real hardware, instead of trusting
-	// LabMotionLimits::kKickBoostTurnsS as an unvalidated guess, so the real
-	// sweep — which commands through the same PreyMotor kick path — isn't
-	// spending its time failing on the low end.
-	bool tune_kick = true;
-	float kick_boost_init = LabMotionLimits::kKickBoostTurnsS;
-	int kick_tune_max_iters = 6;
-	float kick_tune_step = 0.2f;
-	// How far above target counts as "overshot enough to back off the kick",
-	// as opposed to a small, harmless overshoot on the way to settling.
-	float kick_tune_overshoot_margin = 0.3f;
+	// Kick smoke test (runs before Trial A): tries one breakaway from rest to
+	// --rps-min with PreyMotor's kick (see LabMotionLimits::kKick* — a fixed
+	// speed with a feedback-driven cutoff, not a magnitude to search for) and
+	// reports whether it actually worked, before burning through the whole
+	// multi-minute sweep on a kick that doesn't. --kick-speed/--kick-cutoff-frac
+	// let you try a different value against real hardware without a rebuild.
+	bool smoke_test_kick = true;
+	float kick_speed = LabMotionLimits::kKickFixedTurnsS;
+	float kick_cutoff_frac = LabMotionLimits::kKickCutoffFraction;
 	bool write_config = false;
 	bool verbose = false;
 };
@@ -112,8 +109,8 @@ void print_usage() {
 		"    [--rps-min 1.0] [--rps-max 6.0] [--rps-step 0.2] [--hold-s 2.0]\n"
 		"    [--settle-tol-pct 2.5] [--settle-hold-s 0.2] [--sample-hz 100]\n"
 		"    [--torque-constant 0.0827] [--max-step-wait-s 10] [--near-tol 0.1]\n"
-		"    [--grace-s 1.0] [--iq-sign -1] [--kick-boost 1.0]\n"
-		"    [--kick-tune-max-iters 6] [--kick-tune-step 0.2] [--no-tune-kick]\n"
+		"    [--grace-s 1.0] [--iq-sign -1] [--kick-speed 5.0]\n"
+		"    [--kick-cutoff-frac 0.8] [--no-kick-smoke-test]\n"
 		"    [--output <dir>] [--write-config] [--verbose]\n"
 		"\n"
 		"  Two-trial step-response sweep of the prey chain motor from --rps-min\n"
@@ -134,12 +131,12 @@ void print_usage() {
 		"  tau_c all come out negative together, that's this sign issue again,\n"
 		"  not noise.\n"
 		"\n"
-		"  Before Trial A, tunes PreyMotor's breakaway-kick boost against\n"
-		"  --rps-min (see LabMotionLimits::kKick* — only fires for targets under\n"
-		"  kKickMaxTargetTurnsS): starts from --kick-boost, increases by\n"
-		"  --kick-tune-step on undershoot, decreases on overshoot, up to\n"
-		"  --kick-tune-max-iters attempts. Pass --no-tune-kick to skip and use\n"
-		"  --kick-boost as-is.\n"
+		"  Before Trial A, tries one breakaway from rest to --rps-min with\n"
+		"  PreyMotor's kick (see LabMotionLimits::kKick* — a flat --kick-speed\n"
+		"  commanded until measured velocity reaches --kick-cutoff-frac of\n"
+		"  target, only for targets under kKickMaxTargetTurnsS) and reports\n"
+		"  whether it actually settled, before the real sweep spends minutes on\n"
+		"  a kick that doesn't work. Pass --no-kick-smoke-test to skip.\n"
 		"\n"
 		"  The chain MUST be a closed loop (no physical end) — this test spins\n"
 		"  continuously for several minutes and does not track position.\n"
@@ -177,14 +174,12 @@ bool parse_args(int argc, char** argv, Args& args) {
 				args.grace_s = std::stof(argv[++i]);
 			} else if (std::strcmp(argv[i], "--iq-sign") == 0 && i + 1 < argc) {
 				args.iq_sign = std::stof(argv[++i]);
-			} else if (std::strcmp(argv[i], "--kick-boost") == 0 && i + 1 < argc) {
-				args.kick_boost_init = std::stof(argv[++i]);
-			} else if (std::strcmp(argv[i], "--kick-tune-max-iters") == 0 && i + 1 < argc) {
-				args.kick_tune_max_iters = std::stoi(argv[++i]);
-			} else if (std::strcmp(argv[i], "--kick-tune-step") == 0 && i + 1 < argc) {
-				args.kick_tune_step = std::stof(argv[++i]);
-			} else if (std::strcmp(argv[i], "--no-tune-kick") == 0) {
-				args.tune_kick = false;
+			} else if (std::strcmp(argv[i], "--kick-speed") == 0 && i + 1 < argc) {
+				args.kick_speed = std::stof(argv[++i]);
+			} else if (std::strcmp(argv[i], "--kick-cutoff-frac") == 0 && i + 1 < argc) {
+				args.kick_cutoff_frac = std::stof(argv[++i]);
+			} else if (std::strcmp(argv[i], "--no-kick-smoke-test") == 0) {
+				args.smoke_test_kick = false;
 			} else if (std::strcmp(argv[i], "--write-config") == 0) {
 				args.write_config = true;
 			} else if (std::strcmp(argv[i], "--verbose") == 0) {
@@ -694,16 +689,12 @@ int main(int argc, char** argv) {
 		std::cerr << "--iq-sign must be 1 or -1\n";
 		return 1;
 	}
-	if (args.kick_boost_init < 0.0f) {
-		std::cerr << "--kick-boost must be >= 0\n";
+	if (args.kick_speed < 0.0f) {
+		std::cerr << "--kick-speed must be >= 0\n";
 		return 1;
 	}
-	if (args.kick_tune_max_iters < 0) {
-		std::cerr << "--kick-tune-max-iters must be >= 0\n";
-		return 1;
-	}
-	if (args.kick_tune_step <= 0.0f) {
-		std::cerr << "--kick-tune-step must be > 0\n";
+	if (args.kick_cutoff_frac <= 0.0f || args.kick_cutoff_frac > 1.0f) {
+		std::cerr << "--kick-cutoff-frac must be in (0, 1]\n";
 		return 1;
 	}
 
@@ -749,63 +740,36 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	// Breakaway-kick tuning: find a boost that actually works on this
-	// hardware before Trial A/B run, since both command through the same
-	// PreyMotor kick path (see LabMotionLimits::kKick*). Tunes against
-	// --rps-min — the hardest target in the sweep, since kick_boost_turns_s_
-	// is a single value shared across every low-speed target — so whatever
-	// works there should have margin to spare on faster targets under
-	// kKickMaxTargetTurnsS, not less.
-	float kick_boost = args.kick_boost_init;
-	motor.set_kick_boost_turns_s(kick_boost);
-	if (args.tune_kick && args.rps_min < LabMotionLimits::kKickMaxTargetTurnsS
-			&& args.kick_tune_max_iters > 0) {
-		std::cout << "Tuning breakaway kick against " << args.rps_min
-			<< " turns/s (starting boost " << kick_boost << " turns/s)...\n";
-		const auto tune_t0 = std::chrono::steady_clock::now();
-		bool kick_converged = false;
-		for (int iter = 0; iter < args.kick_tune_max_iters && !g_stop.load(); ++iter) {
-			motor.set_kick_boost_turns_s(kick_boost);
-
-			// Actually rest before each attempt — a command that starts from
-			// a still-moving motor isn't the breakaway this is tuning for.
-			motor.set_velocity_turns_s(0.0f);
-			std::this_thread::sleep_for(std::chrono::milliseconds(800));
-
-			std::vector<Sample> tune_samples; // discarded — not part of the calibration
-			StepResult tune_step;
-			int tune_iq_ok = 0;
-			int tune_iq_total = 0;
-			spin_to(motor, args, tune_t0, /*trial=*/0, iter, "up", 0.0f, args.rps_min,
-				tune_samples, tune_step, tune_iq_ok, tune_iq_total);
-
-			if (!tune_step.ok) {
-				kick_boost = std::min(kick_boost + args.kick_tune_step,
-					LabMotionLimits::kKickMaxTargetTurnsS);
-				std::cout << "  iter " << iter << ": undershoot (never settled) -> boost "
-					<< kick_boost << " turns/s\n";
-				continue;
-			}
-			const float overshoot = tune_step.max_vel_turns_s - args.rps_min;
-			if (overshoot > args.kick_tune_overshoot_margin) {
-				kick_boost = std::max(kick_boost - args.kick_tune_step, 0.0f);
-				std::cout << "  iter " << iter << ": settled but overshot by "
-					<< overshoot << " turns/s -> boost " << kick_boost << " turns/s\n";
-				continue;
-			}
-			std::cout << "  iter " << iter << ": settled cleanly (peak "
-				<< tune_step.max_vel_turns_s << " turns/s) -> converged at boost "
-				<< kick_boost << " turns/s\n";
-			kick_converged = true;
-			break;
-		}
-		motor.set_kick_boost_turns_s(kick_boost);
+	// Breakaway-kick smoke test: PreyMotor's kick is a fixed --kick-speed
+	// with a feedback-driven cutoff (see LabMotionLimits::kKick*), not a
+	// magnitude to search for — but Trial A/B command through the same kick
+	// path, so a quick sanity check here beats discovering it doesn't work
+	// after several minutes of sweeping.
+	motor.set_kick_speed_turns_s(args.kick_speed);
+	motor.set_kick_cutoff_fraction(args.kick_cutoff_frac);
+	if (args.smoke_test_kick && args.rps_min < LabMotionLimits::kKickMaxTargetTurnsS) {
+		std::cout << "Kick smoke test: breakaway from rest to " << args.rps_min
+			<< " turns/s (kick-speed " << args.kick_speed << ", cutoff "
+			<< (args.kick_cutoff_frac * 100.0f) << "% of target)...\n";
+		const auto smoke_t0 = std::chrono::steady_clock::now();
+		std::vector<Sample> smoke_samples; // discarded — not part of the calibration
+		StepResult smoke_step;
+		int smoke_iq_ok = 0;
+		int smoke_iq_total = 0;
+		spin_to(motor, args, smoke_t0, /*trial=*/0, /*step_index=*/0, "up", 0.0f,
+			args.rps_min, smoke_samples, smoke_step, smoke_iq_ok, smoke_iq_total);
 		motor.stop(); // rest before Trial A; also resets kick/feed-forward state
-		if (!kick_converged && !g_stop.load()) {
-			std::cout << "Kick tuning did not converge in " << args.kick_tune_max_iters
-				<< " attempts — using boost " << kick_boost << " turns/s anyway "
-				"(steps.csv will show whether the real sweep still struggles at low "
-				"speed).\n";
+		if (smoke_step.ok) {
+			std::cout << "  settled in " << smoke_step.settle_time_s << "s (peak "
+				<< smoke_step.max_vel_turns_s << " turns/s) — proceeding to the sweep.\n";
+		} else if (!g_stop.load()) {
+			std::cout << "  did not settle (last " << smoke_step.end_measured_turns_s
+				<< ", peak " << smoke_step.max_vel_turns_s << " turns/s) — the real "
+				"sweep will likely hit the same wall at this speed. Try a different "
+				"--kick-speed/--kick-cutoff-frac, or check whether the velocity loop "
+				"gains can even hold this speed under real chain load regardless of "
+				"the kick (see CLAUDE.md's vel_integrator_gain note) before spending "
+				"minutes on the full sweep.\n";
 		}
 	}
 

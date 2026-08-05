@@ -10,22 +10,33 @@ namespace LabMotionLimits {
 // Below this Set_Input_Vel, the axis often sits in closed-loop with ~0 motion.
 constexpr float kMinViableTurnsPerS = 1.5f;
 
-// Breakaway kick: PreyMotor briefly overcommands past target when starting
-// from rest into a low target speed, then falls back to the literal target.
-// Below kMinViableTurnsPerS this is close to necessary; up to kKickMaxTargetTurnsS
-// it still measurably helps get off static friction. Tune against real
-// hardware, not derived from any measurement — start conservative.
+// Breakaway kick: PreyMotor commands a fixed, deliberately-oversized speed
+// when starting from rest into a low target speed (to break static
+// friction), then swaps to the literal target once measured velocity shows
+// real progress — not on a fixed timer, since how long breakaway actually
+// takes depends on real hardware/load, not a guess. Below kMinViableTurnsPerS
+// this is close to necessary; up to kKickMaxTargetTurnsS it still measurably
+// helps. Tune against real hardware, not derived from any measurement.
 constexpr float kKickMaxTargetTurnsS = 3.0f;
 // Only kicks when starting from near-rest (a genuine breakaway), not for
 // every intermediate step of an already-moving low-speed trajectory —
 // otherwise a deliberate slow multi-step ramp would jerk at each step.
 constexpr float kKickFromRestTurnsS = 0.3f;
-constexpr float kKickBoostTurnsS = 1.0f;
-constexpr float kKickDurationS = 0.3f;
+// Flat commanded speed during the kick, regardless of target — deliberately
+// well above any target in the kick-eligible range, since the cutoff below
+// (not this magnitude) determines how far it actually goes.
+constexpr float kKickFixedTurnsS = 5.0f;
+// Swap from the kick to the literal target once |measured| reaches this
+// fraction of |target| (0.8 = stop kicking once within 20% of target).
+constexpr float kKickCutoffFraction = 0.8f;
+// Safety fallback only — ends the kick even if velocity feedback never
+// shows the cutoff fraction (stale/missing telemetry), so a bad read can't
+// pin the motor at kKickFixedTurnsS indefinitely.
+constexpr float kKickMaxDurationS = 2.0f;
 // Below this, two successive commands count as "the same target" (floating-
 // point jitter from repeated unit conversions, not a genuine change) — keeps
 // a repeated Set_Input_Vel(same target) from re-evaluating and cancelling an
-// in-progress kick before kKickDurationS elapses.
+// in-progress kick before it reaches the cutoff.
 constexpr float kKickRetriggerDeltaTurnsS = 0.05f;
 
 // Time for sample_vel to approach a step command at ~1.5–1.8 turns/s.

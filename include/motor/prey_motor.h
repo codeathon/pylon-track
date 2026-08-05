@@ -61,12 +61,17 @@ public:
 	bool try_get_active_errors(uint32_t& active_errors, uint32_t& disarm_reason,
 		int timeout_ms = 0) const;
 
-	// Overrides the breakaway-kick boost magnitude (LabMotionLimits::
-	// kKickBoostTurnsS by default) — used by test_motor_inertia_calibration's
-	// kick-tuning phase to find a good value against real hardware before the
-	// real sweep runs, rather than trusting an unvalidated constant.
-	void set_kick_boost_turns_s(float boost) { kick_boost_turns_s_ = boost; }
-	float kick_boost_turns_s() const { return kick_boost_turns_s_; }
+	// Overrides the flat breakaway-kick speed (LabMotionLimits::
+	// kKickFixedTurnsS by default) — lets a caller (e.g.
+	// test_motor_inertia_calibration) try a different value against real
+	// hardware without a rebuild.
+	void set_kick_speed_turns_s(float speed) { kick_speed_turns_s_ = speed; }
+	float kick_speed_turns_s() const { return kick_speed_turns_s_; }
+	// Overrides the kick-to-target cutoff fraction (LabMotionLimits::
+	// kKickCutoffFraction by default) — swap once |measured| reaches this
+	// fraction of |target|.
+	void set_kick_cutoff_fraction(float fraction) { kick_cutoff_fraction_ = fraction; }
+	float kick_cutoff_fraction() const { return kick_cutoff_fraction_; }
 
 	// Chain ↔ motor unit conversions (public for motion planner + calibration).
 	float chain_mps_to_turns_s(float chain_mps) const;
@@ -106,17 +111,24 @@ private:
 	float pursuing_turns_s_ = 0.0f;
 	bool kicking_ = false;
 	std::chrono::steady_clock::time_point kick_start_time_{};
-	float kick_boost_turns_s_ = LabMotionLimits::kKickBoostTurnsS;
+	float kick_speed_turns_s_ = LabMotionLimits::kKickFixedTurnsS;
+	float kick_cutoff_fraction_ = LabMotionLimits::kKickCutoffFraction;
 
 	void refresh_status() const;
 	// torque_ff (N*m) for a Set_Input_Vel(target_turns_s) call, from the
 	// chain_inertia_kg_m2/chain_viscous_friction_nm_s_per_rad/
 	// chain_static_friction_nm model. Returns 0 when uncalibrated, on the
-	// first command, or after a stale gap (motor was idle/stopped).
+	// first command, or after a stale gap (motor was idle/stopped). Takes
+	// the literal target, never the kick-adjusted value — see apply_kick().
 	float compute_torque_ff_nm(float target_turns_s);
-	// Returns the velocity to actually command for this target — boosted
-	// past target for LabMotionLimits::kKickDurationS if this is a fresh
-	// breakaway from rest into a low target speed, otherwise target itself.
+	// Returns the velocity to actually command for this target — a flat
+	// LabMotionLimits::kKickFixedTurnsS (sign-matched) if this is a fresh
+	// breakaway from rest into a low target speed and measured velocity
+	// hasn't yet reached kKickCutoffFraction of target, otherwise target
+	// itself. Deliberately NOT fed into compute_torque_ff_nm: differentiating
+	// across the kick's own artificial jump (e.g. 5 turns/s -> a 1.2 turns/s
+	// target in one tick) would read as a huge, fictitious deceleration and
+	// inject a large spurious braking torque_ff right as the kick ends.
 	float apply_kick(float target_turns_s);
 	// Shared by set_velocity_turns_s() and apply()'s Velocity branch — the
 	// two paths a caller actually commands chain motion through — so kick
