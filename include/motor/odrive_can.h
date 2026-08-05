@@ -1,8 +1,10 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 
 // Low-level ODrive S1 CANSimple client over Linux SocketCAN.
 // Wraps all CAN frame encode/decode so PreyMotor stays chain-centric.
@@ -61,6 +63,12 @@ private:
 	// touches socket_fd_ takes this lock. Recursive because enter_velocity_mode()
 	// calls other public (self-locking) methods.
 	mutable std::recursive_mutex io_mutex_;
+	// Demux cache for recv_frame(): the socket has one shared RX queue but
+	// several independent pollers (get_encoder_estimates, get_iq,
+	// get_active_errors, heartbeat) each want a different cmd_id. Without
+	// this, whichever poller drains the socket first silently discards
+	// frames the others were waiting for — see recv_frame().
+	mutable std::unordered_map<uint16_t, std::array<uint8_t, 8>> rx_cache_;
 
 	bool send_frame(uint16_t cmd_id, const void* data, uint8_t len) const;
 	bool send_raw_frame(uint32_t can_id_11, const void* data, uint8_t len) const;

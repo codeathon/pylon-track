@@ -224,10 +224,32 @@ bool ODriveCan::recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len
 	const auto deadline = std::chrono::steady_clock::now()
 		+ std::chrono::milliseconds(wait_ms);
 
-	// Bus is busy with cyclic encoder/heartbeat — skip non-matching frames until timeout.
-	// timeout_ms == 0: drain already-queued frames only (no wait) so telemetry cannot
-	// stall the Set_Input_Vel cadence used by MotionPlanner.
+	// Several independent callers (get_encoder_estimates every tick, get_iq,
+	// get_active_errors, heartbeat reads) share this one socket, each wanting
+	// a different cmd_id. A raw CAN socket's kernel RX queue is strict FIFO —
+	// read() unconditionally dequeues whatever's next, matching or not. The
+	// old version just discarded non-matching frames, which meant a fast
+	// poller (e.g. get_encoder_estimates' own drain-to-newest loop, called
+	// every sample in the calibration test's hot loop) would silently vacuum
+	// up and throw away Get_Iq/Get_Error replies before get_iq()/
+	// get_active_errors() ever got a chance to see them — those calls would
+	// then *always* time out (RTR sent, but the reply was already consumed
+	// and dropped by the encoder-estimates read moments earlier), regardless
+	// of any RTR/drain fix on the get_iq()/get_active_errors() side alone.
+	// Fix: every frame we dequeue gets demuxed into rx_cache_ by its own
+	// cmd_id (overwriting, so it's already drain-to-newest per cmd_id) so a
+	// different recv_frame() call for that cmd_id can still find it.
 	while (true) {
+		auto cached = rx_cache_.find(expected_cmd_id);
+		if (cached != rx_cache_.end()) {
+			if (data_out && len_out > 0) {
+				std::memcpy(data_out, cached->second.data(),
+					std::min<size_t>(len_out, cached->second.size()));
+			}
+			rx_cache_.erase(cached);
+			return true;
+		}
+
 		int poll_ms = 0;
 		if (wait_ms != 0) {
 			const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -249,14 +271,12 @@ bool ODriveCan::recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len
 		const uint32_t id = frame.can_id & CAN_SFF_MASK;
 		const uint16_t cmd_id = static_cast<uint16_t>(id & 0x1F);
 		const uint8_t node_id = static_cast<uint8_t>((id >> 5) & 0x3F);
-		if (cmd_id != expected_cmd_id || node_id != cfg_.node_id) {
+		if (node_id != cfg_.node_id) {
 			continue;
 		}
-		if (data_out && len_out > 0) {
-			const uint8_t copy_len = std::min(len_out, frame.can_dlc);
-			std::memcpy(data_out, frame.data, copy_len);
-		}
-		return true;
+		std::array<uint8_t, 8> payload{};
+		std::memcpy(payload.data(), frame.data, std::min<uint8_t>(frame.can_dlc, 8));
+		rx_cache_[cmd_id] = payload;
 	}
 }
 
@@ -471,6 +491,7 @@ void ODriveCan::flush_rx() const {
 		return;
 	}
 	// Drop buffered cyclic frames so the next heartbeat reflects post-command state.
+	rx_cache_.clear();
 	pollfd pfd{};
 	pfd.fd = socket_fd_;
 	pfd.events = POLLIN;
