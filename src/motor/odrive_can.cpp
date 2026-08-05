@@ -339,6 +339,14 @@ bool ODriveCan::get_iq(float& iq_setpoint, float& iq_measured, int timeout_ms) c
 	if (!recv_frame(CMD_GET_IQ, buf, sizeof(buf), timeout_ms)) {
 		return false;
 	}
+	// Drain to the *newest* queued frame — same fix get_encoder_estimates
+	// already needed. Cyclic broadcast + this call's own RTR request can
+	// queue frames faster than a --sample-hz caller drains them, and a
+	// single recv_frame() returns the oldest one first (FIFO): without this,
+	// a growing backlog means every read stays pinned to old (often
+	// near-zero, from early in the run) current values indefinitely.
+	while (recv_frame(CMD_GET_IQ, buf, sizeof(buf), /*timeout_ms=*/0)) {
+	}
 	unpack_float_le(buf, iq_setpoint);
 	unpack_float_le(buf + 4, iq_measured);
 	return true;
@@ -352,6 +360,8 @@ bool ODriveCan::get_active_errors(uint32_t& active_errors, uint32_t& disarm_reas
 	uint8_t buf[8] = {};
 	if (!recv_frame(CMD_GET_ERROR, buf, sizeof(buf), timeout_ms)) {
 		return false;
+	}
+	while (recv_frame(CMD_GET_ERROR, buf, sizeof(buf), /*timeout_ms=*/0)) {
 	}
 	std::memcpy(&active_errors, buf, sizeof(uint32_t));
 	std::memcpy(&disarm_reason, buf + 4, sizeof(uint32_t));

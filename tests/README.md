@@ -522,18 +522,31 @@ next target. Only Ctrl-C, or `test_motor_inertia_calibration` failing to
 settle on 5 targets *in a row* (which looks systemic — e.g. a dropped CAN
 connection — rather than one bad speed), stops the run early.
 
+Before giving up, if the step is still unsettled right at `--max-step-wait-s`
+but the last measured velocity is already within `--near-tol` (default 0.1)
+of target, it gets **one** `--grace-s` (default 1 s) extension instead of an
+immediate failure — a slow final approach into tolerance is still real
+dynamics worth letting finish, not a sign of something wrong, and either way
+`settle_time_s` in `steps.csv` reflects the true total time it took (and
+`used_grace` flags that it needed the extra second). Only steps that are
+*still* not near target when the grace check happens skip straight to
+failing; only one extension is granted per step, so a step that's still
+oscillating or genuinely stuck can't stall the sweep indefinitely.
+
 The timeout log line includes the ODrive's `active_errors`/`disarm_reason`
 and `axis_state` at that moment, the measured velocity **range** and last
-value seen during the attempt, and the peak `|Iq|` — plus a one-word
-classification:
+value seen during the attempt, the peak `|Iq|`, and whether the grace
+extension was already used and still didn't help — plus a classification:
 
-- **"stuck short of target"** — velocity never got near the band; the motor
-  couldn't reach that speed at all in the current-limited response.
+- **"steady above/below target by X turns/s"** — velocity wasn't bouncing
+  (swing ≤ 2×`--settle-tol`), it's parked a fixed amount off — including
+  overshot-and-stuck-high, not just undershoot.
 - **"oscillating through the target (hunting)"** — velocity swung above and
   below the target repeatedly without holding inside `--settle-tol`. This is
   a velocity-loop stability symptom, not a "couldn't get there" symptom.
 - **"swinging without settling"** — moved a lot but stayed on one side of
-  the target (didn't cross it).
+  the target (didn't cross it) — e.g. still mid-ramp or overshot once and
+  hasn't come back down yet.
 
 If speeds above some threshold consistently show **"oscillating through the
 target"** with a swing on the order of ±0.1 turns/s or more (not just a
@@ -595,7 +608,9 @@ still written to CSV but no regression is run on an aborted sweep.
 | `--settle-hold-s <s>` | `0.2` | Time the velocity must stay inside the band before it's called settled |
 | `--sample-hz <Hz>` | `100` | Velocity/Iq sampling (and command re-send) rate during ramps and dwells |
 | `--torque-constant <N·m/A>` | `0.0827` | ODrive motor torque constant (`odrivetool`: `axis0.motor.config.torque_constant`) used to convert `Iq_measured` into torque |
-| `--max-step-wait-s <s>` | `10` | Abort the whole sweep if a single step hasn't settled by this long (stall/fault guard) |
+| `--max-step-wait-s <s>` | `10` | Give up on a single step after this long — unless the grace extension below applies (stall/fault guard) |
+| `--near-tol <turns/s>` | `0.1` | If still unsettled right at `--max-step-wait-s` but within this of target, grant one `--grace-s` extension instead of giving up |
+| `--grace-s <s>` | `1.0` | Length of that one-time extension. `steps.csv`'s `used_grace` column and `settle_time_s` reflect whichever attempt it took |
 | `--output <dir>` | `tests/output` | Root for `motor_inertia_calibration/<timestamp>/{samples,steps}.csv` |
 | `--write-config` | off | Merge-write the fitted values into `--config`'s `motor` section |
 | `--verbose` | off | Debug logging |

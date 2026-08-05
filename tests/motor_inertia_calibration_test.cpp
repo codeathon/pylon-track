@@ -64,6 +64,12 @@ struct Args {
 	float sample_hz = 100.0f;
 	float torque_constant = 0.0827f;
 	float max_step_wait_s = 10.0f;
+	// If still unsettled right at max_step_wait_s but already this close to
+	// target, grant one grace_s extension instead of giving up — a slow
+	// final approach is still real dynamics, and settling faster on the
+	// second attempt vs. not settling at all is itself informative.
+	float near_tol = 0.1f;
+	float grace_s = 1.0f;
 	bool write_config = false;
 	bool verbose = false;
 };
@@ -73,8 +79,8 @@ void print_usage() {
 		"Usage: test_motor_inertia_calibration [--config <arena_experiment.json>]\n"
 		"    [--rps-min 1.0] [--rps-max 6.0] [--rps-step 0.2] [--hold-s 2.0]\n"
 		"    [--settle-tol 0.05] [--settle-hold-s 0.2] [--sample-hz 100]\n"
-		"    [--torque-constant 0.0827] [--max-step-wait-s 10] [--output <dir>]\n"
-		"    [--write-config] [--verbose]\n"
+		"    [--torque-constant 0.0827] [--max-step-wait-s 10] [--near-tol 0.1]\n"
+		"    [--grace-s 1.0] [--output <dir>] [--write-config] [--verbose]\n"
 		"\n"
 		"  Two-trial step-response sweep of the prey chain motor from --rps-min\n"
 		"  to --rps-max in --rps-step increments (turns/s), then fits a physical\n"
@@ -112,6 +118,10 @@ bool parse_args(int argc, char** argv, Args& args) {
 				args.torque_constant = std::stof(argv[++i]);
 			} else if (std::strcmp(argv[i], "--max-step-wait-s") == 0 && i + 1 < argc) {
 				args.max_step_wait_s = std::stof(argv[++i]);
+			} else if (std::strcmp(argv[i], "--near-tol") == 0 && i + 1 < argc) {
+				args.near_tol = std::stof(argv[++i]);
+			} else if (std::strcmp(argv[i], "--grace-s") == 0 && i + 1 < argc) {
+				args.grace_s = std::stof(argv[++i]);
 			} else if (std::strcmp(argv[i], "--write-config") == 0) {
 				args.write_config = true;
 			} else if (std::strcmp(argv[i], "--verbose") == 0) {
@@ -154,6 +164,10 @@ struct StepResult {
 	// when ok is false, so a failed step's "true" endpoint is known instead
 	// of blindly assuming the nominal target was reached.
 	float end_measured_turns_s = 0.0f;
+	// True if this step needed the --grace-s extension to settle (or still
+	// failed even with it) — settle_time_s already reflects the real total
+	// time either way, this just flags that it wasn't a first-attempt settle.
+	bool used_grace = false;
 	bool ok = false;
 };
 
@@ -204,6 +218,8 @@ bool spin_to(PreyMotor& motor, const Args& args,
 	float min_vel = from_turns_s;
 	float max_vel = from_turns_s;
 	float max_iq_abs = 0.0f;
+	float effective_wait_s = args.max_step_wait_s;
+	bool grace_used = false;
 
 	while (!g_stop.load()) {
 		const auto iter_start = std::chrono::steady_clock::now();
@@ -255,8 +271,19 @@ bool spin_to(PreyMotor& motor, const Args& args,
 			// settling can complete in *this same* iteration (the branch
 			// above), and a stale wait-limit check must not override a
 			// just-confirmed settle.
-			if (!settled_at && elapsed > args.max_step_wait_s) {
-				break;
+			if (!settled_at && elapsed > effective_wait_s) {
+				// One grace_s extension if it's already close (--near-tol) —
+				// a slow final approach is still real dynamics worth letting
+				// finish, and whether it needed the extra time (and how much)
+				// is itself useful signal for the regression, not just a
+				// pass/fail bit.
+				if (!grace_used
+						&& std::fabs(last_vel - target_turns_s) <= args.near_tol) {
+					grace_used = true;
+					effective_wait_s += args.grace_s;
+				} else {
+					break;
+				}
 			}
 		} else if (elapsed - *settled_at - args.settle_hold_s >= args.hold_s) {
 			break; // finished the post-settle dwell
@@ -268,6 +295,7 @@ bool spin_to(PreyMotor& motor, const Args& args,
 	}
 
 	step_out.end_measured_turns_s = last_vel;
+	step_out.used_grace = grace_used;
 
 	if (g_stop.load()) {
 		return false;
@@ -299,7 +327,11 @@ bool spin_to(PreyMotor& motor, const Args& args,
 			+ " turns/s from " + std::to_string(from_turns_s) + " — " + pattern
 			+ " (measured range " + std::to_string(min_vel) + " to "
 			+ std::to_string(max_vel) + " turns/s, last " + std::to_string(last_vel)
-			+ ", max |Iq| " + std::to_string(max_iq_abs) + " A)";
+			+ ", max |Iq| " + std::to_string(max_iq_abs) + " A)"
+			+ (grace_used
+				? " [still failed after +" + std::to_string(args.grace_s)
+					+ "s grace extension]"
+				: "");
 		uint32_t active_errors = 0;
 		uint32_t disarm_reason = 0;
 		if (motor.try_get_active_errors(active_errors, disarm_reason)) {
@@ -537,13 +569,14 @@ bool write_steps_csv(const std::string& path, const std::vector<StepResult>& ste
 		return false;
 	}
 	f << "trial,step_index,direction,from_turns_s,to_turns_s,delta_turns_s,"
-		"settle_time_s,end_measured_turns_s,ok\n";
+		"settle_time_s,end_measured_turns_s,used_grace,ok\n";
 	f << std::fixed << std::setprecision(5);
 	for (const auto& s : steps) {
 		f << s.trial << ',' << s.step_index << ',' << s.direction << ','
 			<< s.from_turns_s << ',' << s.to_turns_s << ','
 			<< (s.to_turns_s - s.from_turns_s) << ',' << s.settle_time_s << ','
-			<< s.end_measured_turns_s << ',' << (s.ok ? 1 : 0) << '\n';
+			<< s.end_measured_turns_s << ',' << (s.used_grace ? 1 : 0) << ','
+			<< (s.ok ? 1 : 0) << '\n';
 	}
 	return true;
 }
@@ -580,6 +613,10 @@ int main(int argc, char** argv) {
 	}
 	if (args.torque_constant <= 0.0f) {
 		std::cerr << "--torque-constant must be > 0\n";
+		return 1;
+	}
+	if (args.near_tol < 0.0f || args.grace_s < 0.0f) {
+		std::cerr << "--near-tol/--grace-s must be >= 0\n";
 		return 1;
 	}
 
