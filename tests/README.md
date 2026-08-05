@@ -523,18 +523,46 @@ settle on 5 targets *in a row* (which looks systemic — e.g. a dropped CAN
 connection — rather than one bad speed), stops the run early.
 
 The timeout log line includes the ODrive's `active_errors`/`disarm_reason`
-and `axis_state` at that moment, plus the last measured velocity, so you
-don't have to dig through `samples.csv` just to tell an ODrive fault apart
-from the motor simply not settling. If a **narrow band** of speeds
-consistently fails while its neighbors settle fine (e.g. only 4.4–4.6
-turns/s out of a 1.0–6.0 sweep), that's almost always a real property of the
-hardware at that RPM — a mechanical resonance in the chain/sprocket, or the
-motor running low on current headroom against rising back-EMF — not a bug in
-this test. Check `iq_measured_a` in `samples.csv` for that band: if it's
-pinned near the current limit (60 A) while velocity still won't hold inside
-`--settle-tol`, that's exactly what's happening. Loosening `--settle-tol` or
-`--settle-hold-s` will make the symptom disappear without fixing the
-underlying limit — treat that as confirmation, not a real fix.
+and `axis_state` at that moment, the measured velocity **range** and last
+value seen during the attempt, and the peak `|Iq|` — plus a one-word
+classification:
+
+- **"stuck short of target"** — velocity never got near the band; the motor
+  couldn't reach that speed at all in the current-limited response.
+- **"oscillating through the target (hunting)"** — velocity swung above and
+  below the target repeatedly without holding inside `--settle-tol`. This is
+  a velocity-loop stability symptom, not a "couldn't get there" symptom.
+- **"swinging without settling"** — moved a lot but stayed on one side of
+  the target (didn't cross it).
+
+If speeds above some threshold consistently show **"oscillating through the
+target"** with a swing on the order of ±0.1 turns/s or more (not just a
+narrow resonance pocket — the same pattern at every speed above the
+threshold), that's a velocity-loop tuning symptom, and it may be related to
+`kDefaultCurrentLimitA` in `src/motor/odrive_can.cpp` (currently 60 A): a
+lower current limit can *mask* an underdamped velocity loop by saturating
+current before it can overshoot, so raising the limit can turn a slow-but-
+smooth response into a faster-but-oscillating one. To tell them apart:
+
+1. Check `max |Iq|` in the timeout log / `iq_measured_a` in `samples.csv` for
+   the failing speeds. Pinned near the current limit the whole time → torque/
+   back-EMF saturation (a real ceiling for this speed, not a tuning issue).
+   Swinging up and down with velocity rather than pinned → the loop actively
+   fighting an oscillation (a tuning issue).
+2. As a diagnostic (not a permanent fix), try temporarily lowering
+   `kDefaultCurrentLimitA` back toward 40 in `src/motor/odrive_can.cpp` and
+   rebuilding. If the oscillation above the threshold goes away, the real fix
+   is retuning the ODrive's velocity-loop gains for the higher current
+   ceiling (`odrivetool`: `axis0.controller.config.vel_gain` /
+   `vel_integrator_gain`), not this test's code.
+3. If you just need usable calibration data now while investigating further,
+   run with `--rps-max` set just below wherever it starts failing (e.g.
+   `--rps-max 4.4`) — the regression is valid over whatever range you
+   actually swept, it doesn't need to cover 1.0–6.0.
+
+Loosening `--settle-tol` or `--settle-hold-s` will make either symptom
+disappear from the log without fixing the underlying limit — treat that as
+confirmation of a real issue, not a fix for one.
 
 ### Steps to run it
 

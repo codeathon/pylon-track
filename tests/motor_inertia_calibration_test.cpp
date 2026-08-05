@@ -198,6 +198,13 @@ bool spin_to(PreyMotor& motor, const Args& args,
 	std::optional<double> settled_at;
 	float last_vel = from_turns_s;
 	bool timed_out = false;
+	// Why: "timed out" alone can't tell oscillation/hunting (velocity swinging
+	// through the band without holding) apart from a flat undershoot (stuck
+	// short of target) or current saturation — track the attempt's range so
+	// the diagnostic below can say which one actually happened.
+	float min_vel = from_turns_s;
+	float max_vel = from_turns_s;
+	float max_iq_abs = 0.0f;
 
 	while (!g_stop.load()) {
 		const auto iter_start = std::chrono::steady_clock::now();
@@ -209,6 +216,8 @@ bool spin_to(PreyMotor& motor, const Args& args,
 		float vel_sample = 0.0f;
 		if (motor.try_sample_velocity_turns_s(vel_sample, /*timeout_ms=*/0)) {
 			last_vel = vel_sample;
+			min_vel = std::min(min_vel, vel_sample);
+			max_vel = std::max(max_vel, vel_sample);
 		}
 		float iq_sp = 0.0f;
 		float iq_meas = 0.0f;
@@ -216,6 +225,7 @@ bool spin_to(PreyMotor& motor, const Args& args,
 		const bool iq_ok = motor.try_get_iq(iq_sp, iq_meas);
 		if (iq_ok) {
 			++iq_success_count;
+			max_iq_abs = std::max(max_iq_abs, std::fabs(iq_meas));
 		}
 
 		Sample s;
@@ -265,9 +275,18 @@ bool spin_to(PreyMotor& motor, const Args& args,
 		// resonance/back-EMF limit at this speed vs. an ODrive fault — dump
 		// what we can so a stuck band doesn't require re-running with a
 		// debugger attached.
+		const float swing = max_vel - min_vel;
+		const char* pattern = "stuck short of target";
+		if (swing > 2.0f * args.settle_tol) {
+			pattern = (min_vel < target_turns_s && max_vel > target_turns_s)
+				? "oscillating through the target (hunting)"
+				: "swinging without settling";
+		}
 		std::string diag = "Timed out reaching " + std::to_string(target_turns_s)
-			+ " turns/s from " + std::to_string(from_turns_s) + " (last measured "
-			+ std::to_string(last_vel) + " turns/s)";
+			+ " turns/s from " + std::to_string(from_turns_s) + " — " + pattern
+			+ " (measured range " + std::to_string(min_vel) + " to "
+			+ std::to_string(max_vel) + " turns/s, last " + std::to_string(last_vel)
+			+ ", max |Iq| " + std::to_string(max_iq_abs) + " A)";
 		uint32_t active_errors = 0;
 		uint32_t disarm_reason = 0;
 		if (motor.try_get_active_errors(active_errors, disarm_reason)) {
