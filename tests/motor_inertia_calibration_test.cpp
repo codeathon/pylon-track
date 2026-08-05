@@ -81,6 +81,15 @@ struct Args {
 	// second attempt vs. not settling at all is itself informative.
 	float near_tol = 0.1f;
 	float grace_s = 1.0f;
+	// Some rigs report Iq_Measured with the opposite sign convention from the
+	// encoder's positive-velocity direction (current-sensor/phase polarity,
+	// not a bug in this test) — that shows up as *all three* dynamic-fit
+	// coefficients (J, B, tau_c) coming out negative together, which is
+	// physically impossible. Default +1 (unflipped) so a correctly-wired rig
+	// isn't silently corrupted; pass -1 only after confirming iq_measured_a
+	// in samples.csv is consistently the wrong sign for the direction of
+	// motion.
+	float iq_sign = 1.0f;
 	bool write_config = false;
 	bool verbose = false;
 };
@@ -91,7 +100,8 @@ void print_usage() {
 		"    [--rps-min 1.0] [--rps-max 6.0] [--rps-step 0.2] [--hold-s 2.0]\n"
 		"    [--settle-tol-pct 2.5] [--settle-hold-s 0.2] [--sample-hz 100]\n"
 		"    [--torque-constant 0.0827] [--max-step-wait-s 10] [--near-tol 0.1]\n"
-		"    [--grace-s 1.0] [--output <dir>] [--write-config] [--verbose]\n"
+		"    [--grace-s 1.0] [--iq-sign 1] [--output <dir>] [--write-config]\n"
+		"    [--verbose]\n"
 		"\n"
 		"  Two-trial step-response sweep of the prey chain motor from --rps-min\n"
 		"  to --rps-max in --rps-step increments (turns/s), then fits a physical\n"
@@ -103,6 +113,13 @@ void print_usage() {
 		"  floored at " + std::to_string(kMinSettleTolTurnsS) + " turns/s (never\n"
 		"  tighter than that floor; loosens once --settle-tol-pct of the target\n"
 		"  exceeds it).\n"
+		"\n"
+		"  --iq-sign: multiplies Iq_Measured before it's used in the dynamic fit.\n"
+		"  If J, B, and tau_c all come out negative together, that's not noise -\n"
+		"  it's Iq_Measured's sign convention disagreeing with the encoder's\n"
+		"  positive-velocity direction on this rig. Confirm by checking\n"
+		"  iq_measured_a against measured_turns_s in samples.csv during a clean\n"
+		"  spin-up, then pass -1 to correct it.\n"
 		"\n"
 		"  The chain MUST be a closed loop (no physical end) — this test spins\n"
 		"  continuously for several minutes and does not track position.\n"
@@ -138,6 +155,8 @@ bool parse_args(int argc, char** argv, Args& args) {
 				args.near_tol = std::stof(argv[++i]);
 			} else if (std::strcmp(argv[i], "--grace-s") == 0 && i + 1 < argc) {
 				args.grace_s = std::stof(argv[++i]);
+			} else if (std::strcmp(argv[i], "--iq-sign") == 0 && i + 1 < argc) {
+				args.iq_sign = std::stof(argv[++i]);
 			} else if (std::strcmp(argv[i], "--write-config") == 0) {
 				args.write_config = true;
 			} else if (std::strcmp(argv[i], "--verbose") == 0) {
@@ -451,7 +470,7 @@ struct DynamicFit {
 };
 
 DynamicFit fit_dynamic_model(const std::vector<Sample>& samples, float torque_constant,
-	float sample_hz)
+	float sample_hz, float iq_sign)
 {
 	DynamicFit result;
 	// Why: consecutive samples should be ~1/sample_hz apart; a gap several
@@ -480,7 +499,7 @@ DynamicFit fit_dynamic_model(const std::vector<Sample>& samples, float torque_co
 		row.omega_rad = omega_turns_s * kTwoPi;
 		row.sign_omega = (row.omega_rad > 1e-3) ? 1.0
 			: (row.omega_rad < -1e-3 ? -1.0 : 0.0);
-		row.torque_nm = iq * torque_constant;
+		row.torque_nm = iq_sign * iq * torque_constant;
 		rows.push_back(row);
 	}
 	result.n = static_cast<int>(rows.size());
@@ -634,6 +653,10 @@ int main(int argc, char** argv) {
 	}
 	if (args.near_tol < 0.0f || args.grace_s < 0.0f) {
 		std::cerr << "--near-tol/--grace-s must be >= 0\n";
+		return 1;
+	}
+	if (args.iq_sign != 1.0f && args.iq_sign != -1.0f) {
+		std::cerr << "--iq-sign must be 1 or -1\n";
 		return 1;
 	}
 
@@ -797,7 +820,8 @@ int main(int argc, char** argv) {
 		<< "n=" << timing.n << "  a=" << timing.a_s << " s  b=" << timing.b_s_per_turn
 		<< " s per turn/s\n";
 
-	const DynamicFit dyn = fit_dynamic_model(samples, args.torque_constant, args.sample_hz);
+	const DynamicFit dyn = fit_dynamic_model(samples, args.torque_constant, args.sample_hz,
+		args.iq_sign);
 	if (dyn.n < 10) {
 		log_error("inertia_cal",
 			"Not enough valid sample pairs (Iq + consecutive velocity) for the "

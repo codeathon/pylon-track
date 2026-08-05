@@ -616,6 +616,7 @@ still written to CSV but no regression is run on an aborted sweep.
 | `--max-step-wait-s <s>` | `10` | Give up on a single step after this long — unless the grace extension below applies (stall/fault guard) |
 | `--near-tol <turns/s>` | `0.1` | If still unsettled right at `--max-step-wait-s` but within this of target, grant one `--grace-s` extension instead of giving up |
 | `--grace-s <s>` | `1.0` | Length of that one-time extension. `steps.csv`'s `used_grace` column and `settle_time_s` reflect whichever attempt it took |
+| `--iq-sign <1 or -1>` | `1` | Multiplies `Iq_Measured` before the dynamic fit. If `chain_inertia_kg_m2`, `chain_viscous_friction_nm_s_per_rad`, and `chain_static_friction_nm` all come out negative together, that's a current-sensor/encoder sign mismatch on this rig, not noise — confirm by checking `iq_measured_a` against `measured_turns_s` in `samples.csv` during a clean spin-up, then pass `-1` |
 | `--output <dir>` | `tests/output` | Root for `motor_inertia_calibration/<timestamp>/{samples,steps}.csv` |
 | `--write-config` | off | Merge-write the fitted values into `--config`'s `motor` section |
 | `--verbose` | off | Debug logging |
