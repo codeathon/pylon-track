@@ -152,6 +152,21 @@ bool ODriveCan::send_raw_frame(uint32_t can_id_11, const void* data, uint8_t len
 	return n == static_cast<ssize_t>(sizeof(frame));
 }
 
+// Why: Get_Iq/Get_Error are only cyclic if separately enabled on the ODrive
+// (unlike Heartbeat, which is always on) — recv_frame alone can wait forever
+// if that was never configured. CANSimple answers an RTR frame with that
+// Get_* message once, on demand, regardless of the cyclic setting.
+bool ODriveCan::send_rtr_frame(uint16_t cmd_id) const {
+	if (socket_fd_ < 0) {
+		return false;
+	}
+	can_frame frame{};
+	frame.can_id = (can_id(cmd_id, cfg_.node_id) & CAN_SFF_MASK) | CAN_RTR_FLAG;
+	frame.can_dlc = 8; // expected reply length; RTR frames carry no payload
+	const ssize_t n = write(socket_fd_, &frame, sizeof(frame));
+	return n == static_cast<ssize_t>(sizeof(frame));
+}
+
 bool ODriveCan::send_frame(uint16_t cmd_id, const void* data, uint8_t len) const {
 	return send_raw_frame(can_id(cmd_id, cfg_.node_id), data, len);
 }
@@ -315,6 +330,11 @@ bool ODriveCan::set_axis_state(uint32_t requested_state) {
 
 bool ODriveCan::get_iq(float& iq_setpoint, float& iq_measured, int timeout_ms) const {
 	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
+	// Fire-and-check: with timeout_ms=0 (non-blocking peek, the hot-loop case)
+	// this request's own reply won't have arrived yet by the time we poll —
+	// it'll show up as *this* frame queued for the *next* call instead, a few
+	// ms later. Harmless either way when called every loop iteration.
+	send_rtr_frame(CMD_GET_IQ);
 	uint8_t buf[8] = {};
 	if (!recv_frame(CMD_GET_IQ, buf, sizeof(buf), timeout_ms)) {
 		return false;
@@ -328,6 +348,7 @@ bool ODriveCan::get_active_errors(uint32_t& active_errors, uint32_t& disarm_reas
 	int timeout_ms) const
 {
 	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
+	send_rtr_frame(CMD_GET_ERROR);
 	uint8_t buf[8] = {};
 	if (!recv_frame(CMD_GET_ERROR, buf, sizeof(buf), timeout_ms)) {
 		return false;

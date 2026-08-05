@@ -610,11 +610,22 @@ still written to CSV but no regression is run on an aborted sweep.
   the three calibrated values, formatted ready to paste into
   `config/arena_experiment.json`'s `motor` section.
 
-If fewer than half the `Get_Iq` reads succeed, the tool warns that cyclic Iq
-broadcast likely isn't enabled in the ODrive's CAN config and the dynamic fit
-(not the timing cross-check) should be treated as unreliable until that's
-fixed in `odrivetool`. A fitted `chain_inertia_kg_m2 <= 0` is flagged the same
-way — physically impossible, so the run's numbers shouldn't be trusted as-is.
+`Get_Iq`/`Get_Error` are requested on demand over CAN (an RTR frame) rather
+than relying on the ODrive's cyclic-broadcast config for those two messages
+— unlike `Get_Encoder_Estimates`/`Heartbeat`, they aren't cyclic by default,
+and this driver previously had no way to ask for them, so `max |Iq|` in the
+timeout log and `iq_measured_a` in `samples.csv` always read `0`/invalid no
+matter how long it waited. If you're on an older build without this fix and
+still see `max |Iq| = 0.000000 A` on every single step (not just the failing
+ones), that's the symptom — check `axis_error`/`axis_state` instead in the
+meantime, since those come from Heartbeat and are unaffected.
+
+If fewer than half the `Get_Iq` reads still succeed after this fix, the tool
+warns that something is still off (e.g. the ODrive genuinely isn't answering
+RTR requests on this firmware version) and the dynamic fit (not the timing
+cross-check) should be treated as unreliable. A fitted `chain_inertia_kg_m2
+<= 0` is flagged the same way — physically impossible, so the run's numbers
+shouldn't be trusted as-is.
 
 ## Basler calibration notes
 

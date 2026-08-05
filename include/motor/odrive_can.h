@@ -64,6 +64,9 @@ private:
 
 	bool send_frame(uint16_t cmd_id, const void* data, uint8_t len) const;
 	bool send_raw_frame(uint32_t can_id_11, const void* data, uint8_t len) const;
+	// On-demand request for a Get_* message that may not be cyclically
+	// broadcast (Get_Iq, Get_Error) — see get_iq()/get_active_errors().
+	bool send_rtr_frame(uint16_t cmd_id) const;
 	bool recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len_out,
 		int timeout_ms = -1) const;
 	bool wait_for_axis_state(uint32_t wanted, int timeout_ms) const;
