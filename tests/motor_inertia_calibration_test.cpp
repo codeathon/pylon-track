@@ -276,11 +276,22 @@ bool spin_to(PreyMotor& motor, const Args& args,
 		// what we can so a stuck band doesn't require re-running with a
 		// debugger attached.
 		const float swing = max_vel - min_vel;
-		const char* pattern = "stuck short of target";
+		const float end_offset = last_vel - target_turns_s;
+		std::string pattern;
 		if (swing > 2.0f * args.settle_tol) {
+			// Why: crossing to both sides of the target is a genuinely
+			// different failure mode (loop hunting) from moving a lot but
+			// staying on one side (still ramping, or overshot and holding).
 			pattern = (min_vel < target_turns_s && max_vel > target_turns_s)
 				? "oscillating through the target (hunting)"
 				: "swinging without settling";
+		} else {
+			// Not bouncing — say which side of the target it's actually
+			// parked on and by how much, instead of assuming "short".
+			char buf[64];
+			std::snprintf(buf, sizeof(buf), "steady %s target by %.3f turns/s",
+				(end_offset >= 0.0f ? "above" : "below"), std::fabs(end_offset));
+			pattern = buf;
 		}
 		std::string diag = "Timed out reaching " + std::to_string(target_turns_s)
 			+ " turns/s from " + std::to_string(from_turns_s) + " — " + pattern
