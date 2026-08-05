@@ -197,7 +197,6 @@ bool spin_to(PreyMotor& motor, const Args& args,
 	std::optional<double> in_band_since;
 	std::optional<double> settled_at;
 	float last_vel = from_turns_s;
-	bool timed_out = false;
 	// Why: "timed out" alone can't tell oscillation/hunting (velocity swinging
 	// through the band without holding) apart from a flat undershoot (stuck
 	// short of target) or current saturation — track the attempt's range so
@@ -252,8 +251,11 @@ bool spin_to(PreyMotor& motor, const Args& args,
 			} else {
 				in_band_since.reset();
 			}
-			if (elapsed > args.max_step_wait_s) {
-				timed_out = true;
+			// Why: check !settled_at again here, not just at loop entry —
+			// settling can complete in *this same* iteration (the branch
+			// above), and a stale wait-limit check must not override a
+			// just-confirmed settle.
+			if (!settled_at && elapsed > args.max_step_wait_s) {
 				break;
 			}
 		} else if (elapsed - *settled_at - args.settle_hold_s >= args.hold_s) {
@@ -270,7 +272,7 @@ bool spin_to(PreyMotor& motor, const Args& args,
 	if (g_stop.load()) {
 		return false;
 	}
-	if (timed_out || !settled_at) {
+	if (!settled_at) {
 		// Why: a bare "timed out" tells you nothing about whether this is a
 		// resonance/back-EMF limit at this speed vs. an ODrive fault — dump
 		// what we can so a stuck band doesn't require re-running with a
