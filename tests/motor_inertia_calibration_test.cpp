@@ -81,15 +81,14 @@ struct Args {
 	// second attempt vs. not settling at all is itself informative.
 	float near_tol = 0.1f;
 	float grace_s = 1.0f;
-	// Some rigs report Iq_Measured with the opposite sign convention from the
-	// encoder's positive-velocity direction (current-sensor/phase polarity,
-	// not a bug in this test) — that shows up as *all three* dynamic-fit
-	// coefficients (J, B, tau_c) coming out negative together, which is
-	// physically impossible. Default +1 (unflipped) so a correctly-wired rig
-	// isn't silently corrupted; pass -1 only after confirming iq_measured_a
-	// in samples.csv is consistently the wrong sign for the direction of
-	// motion.
-	float iq_sign = 1.0f;
+	// This lab's ODrive reports Iq_Measured with the opposite sign convention
+	// from the encoder's positive-velocity direction (current-sensor/phase
+	// polarity, confirmed on hardware — not a bug in this test). Unflipped,
+	// that shows up as *all three* dynamic-fit coefficients (J, B, tau_c)
+	// coming out negative together, which is physically impossible. Defaults
+	// to -1 (flipped) for this rig; pass 1 if it's ever rewired/reconfigured
+	// so Iq agrees with the encoder again.
+	float iq_sign = -1.0f;
 	bool write_config = false;
 	bool verbose = false;
 };
@@ -100,7 +99,7 @@ void print_usage() {
 		"    [--rps-min 1.0] [--rps-max 6.0] [--rps-step 0.2] [--hold-s 2.0]\n"
 		"    [--settle-tol-pct 2.5] [--settle-hold-s 0.2] [--sample-hz 100]\n"
 		"    [--torque-constant 0.0827] [--max-step-wait-s 10] [--near-tol 0.1]\n"
-		"    [--grace-s 1.0] [--iq-sign 1] [--output <dir>] [--write-config]\n"
+		"    [--grace-s 1.0] [--iq-sign -1] [--output <dir>] [--write-config]\n"
 		"    [--verbose]\n"
 		"\n"
 		"  Two-trial step-response sweep of the prey chain motor from --rps-min\n"
@@ -115,11 +114,11 @@ void print_usage() {
 		"  exceeds it).\n"
 		"\n"
 		"  --iq-sign: multiplies Iq_Measured before it's used in the dynamic fit.\n"
-		"  If J, B, and tau_c all come out negative together, that's not noise -\n"
-		"  it's Iq_Measured's sign convention disagreeing with the encoder's\n"
-		"  positive-velocity direction on this rig. Confirm by checking\n"
-		"  iq_measured_a against measured_turns_s in samples.csv during a clean\n"
-		"  spin-up, then pass -1 to correct it.\n"
+		"  Defaults to -1 because this rig's Iq_Measured sign convention\n"
+		"  disagrees with the encoder's positive-velocity direction (confirmed\n"
+		"  on hardware). Pass 1 only if that's ever fixed/rewired — if J, B, and\n"
+		"  tau_c all come out negative together, that's this sign issue again,\n"
+		"  not noise.\n"
 		"\n"
 		"  The chain MUST be a closed loop (no physical end) — this test spins\n"
 		"  continuously for several minutes and does not track position.\n"

@@ -47,6 +47,38 @@ this file is just what a fresh session needs to not re-derive from scratch.
   `ODriveCan` socket — it now has its own mutex (`io_mutex_`) after a data-race
   fix; if you add another concurrent caller, make sure it still goes through
   the locked public API, not `send_frame`/`recv_frame` directly.
+- `ODriveCan::recv_frame()` demuxes the shared CAN RX queue into a per-cmd_id
+  cache (`rx_cache_`) instead of discarding frames that don't match what the
+  calling method asked for. This matters for any new Get_* telemetry getter:
+  without going through this cache, a fast poller (e.g.
+  `get_encoder_estimates`, called every sample tick) will silently vacuum up
+  and discard frames a different, slower poller (e.g. `get_iq`,
+  `get_active_errors`) is waiting for — a real bug that made Get_Iq/Get_Error
+  always time out regardless of RTR requests, fixed on `inertia-calibration`.
+  Route any new Get_* getter through `recv_frame()`; don't `read()` the
+  socket directly.
+- This lab's ODrive reports `Iq_Measured` with the opposite sign convention
+  from the encoder's positive-velocity direction (current-sensor/phase
+  polarity — confirmed on hardware by checking `iq_measured_a` against
+  `measured_turns_s` during a clean spin-up, not a guess). Iq isn't read in
+  any production control path today, only in
+  `tests/motor_inertia_calibration_test.cpp`'s dynamic-fit regression, where
+  it's corrected via `--iq-sign` (defaults to `-1` for this rig — if it's
+  ever rewired/reconfigured, the tell is `chain_inertia_kg_m2`/
+  `chain_viscous_friction_nm_s_per_rad`/`chain_static_friction_nm` all
+  fitting negative together, which is physically impossible). If Iq is ever
+  read from a production path, remember the sign is inverted on this rig.
+- This rig's ODrive velocity loop (`axis0.controller.config.vel_gain` /
+  `vel_integrator_gain`, set via `odrivetool`, not this repo) needed
+  retuning after raising the CAN current limit from 40A to 60A
+  (`kDefaultCurrentLimitA` in `odrive_can.cpp`) — the higher ceiling
+  unmasked an underdamped loop the old 40A limit had been saturating
+  current before it could visibly oscillate. Original gains (~0.167 /
+  ~0.333, a 2:1 integrator:proportional ratio) produced a sustained
+  limit-cycle around the target speed that didn't damp out no matter how
+  long you waited; lowering `vel_integrator_gain` to ~0.05-0.06 fixed it.
+  If chain motor speed steps oscillate again after any future current-limit
+  or gain change, this is the same class of issue, not a code bug.
 - `ShuttleMotor` (LabJack, `include/motor/shuttle_motor.h`) replaced an older
   `TrapDoorMotor`/`LabJackDAC` design (deleted). It drives two LabJack
   **analog** FIO pins (FIO4/FIO5 — not fixed digital, so "high" is a real
