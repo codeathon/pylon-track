@@ -510,9 +510,14 @@ test does not change motor behavior unless you save its output there
    `torque = J·α + B·ω + τ_c·sign(ω)` for inertia `J`, viscous friction `B`,
    and static/Coulomb friction `τ_c`. Reports R² alongside the fit.
 
-"Reached" a target means velocity stayed within `--settle-tol` (default
-±0.05 turns/s) continuously for `--settle-hold-s` (default 0.2 s) — a single
-in-band sample doesn't count, to reject overshoot bouncing through the band.
+"Reached" a target means velocity stayed within a band continuously for
+`--settle-hold-s` (default 0.2 s) — a single in-band sample doesn't count, to
+reject overshoot bouncing through the band. The band is `--settle-tol-pct`
+(default 2.5%) of the target speed, floored at 0.05 turns/s — never tighter
+than that floor (so low-speed steps aren't held to a stricter band than
+before), only loosening once 2.5% of the target exceeds it (above ~2 rps at
+the default). The floor also covers the descent-to-0 step after every ramp,
+where a pure percentage would be an unsatisfiable 0-width band.
 
 ### If a step won't settle at a specific speed
 
@@ -539,10 +544,10 @@ value seen during the attempt, the peak `|Iq|`, and whether the grace
 extension was already used and still didn't help — plus a classification:
 
 - **"steady above/below target by X turns/s"** — velocity wasn't bouncing
-  (swing ≤ 2×`--settle-tol`), it's parked a fixed amount off — including
+  (swing ≤ 2× the settle band), it's parked a fixed amount off — including
   overshot-and-stuck-high, not just undershoot.
 - **"oscillating through the target (hunting)"** — velocity swung above and
-  below the target repeatedly without holding inside `--settle-tol`. This is
+  below the target repeatedly without holding inside the settle band. This is
   a velocity-loop stability symptom, not a "couldn't get there" symptom.
 - **"swinging without settling"** — moved a lot but stayed on one side of
   the target (didn't cross it) — e.g. still mid-ramp or overshot once and
@@ -573,7 +578,7 @@ smooth response into a faster-but-oscillating one. To tell them apart:
    `--rps-max 4.4`) — the regression is valid over whatever range you
    actually swept, it doesn't need to cover 1.0–6.0.
 
-Loosening `--settle-tol` or `--settle-hold-s` will make either symptom
+Loosening `--settle-tol-pct` or `--settle-hold-s` will make either symptom
 disappear from the log without fixing the underlying limit — treat that as
 confirmation of a real issue, not a fix for one.
 
@@ -604,7 +609,7 @@ still written to CSV but no regression is run on an aborted sweep.
 | `--rps-max <turns/s>` | `6.0` | Last (highest) sweep target |
 | `--rps-step <turns/s>` | `0.2` | Increment between targets |
 | `--hold-s <s>` | `2.0` | Dwell time after settling at each target (and at 0) |
-| `--settle-tol <turns/s>` | `0.05` | ± band around the target that counts as "reached" |
+| `--settle-tol-pct <%>` | `2.5` | ± band around the target that counts as "reached", as a percent of the target speed, floored at 0.05 turns/s |
 | `--settle-hold-s <s>` | `0.2` | Time the velocity must stay inside the band before it's called settled |
 | `--sample-hz <Hz>` | `100` | Velocity/Iq sampling (and command re-send) rate during ramps and dwells |
 | `--torque-constant <N·m/A>` | `0.0827` | ODrive motor torque constant (`odrivetool`: `axis0.motor.config.torque_constant`) used to convert `Iq_measured` into torque |

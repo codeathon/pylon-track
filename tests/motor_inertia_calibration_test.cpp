@@ -11,7 +11,7 @@
 // Usage:
 //   test_motor_inertia_calibration [--config <arena_experiment.json>]
 //       [--rps-min 1.0] [--rps-max 6.0] [--rps-step 0.2] [--hold-s 2.0]
-//       [--settle-tol 0.05] [--settle-hold-s 0.2] [--sample-hz 100]
+//       [--settle-tol-pct 2.5] [--settle-hold-s 0.2] [--sample-hz 100]
 //       [--torque-constant 0.0827] [--max-step-wait-s 10] [--output <dir>]
 //       [--write-config] [--verbose]
 
@@ -41,6 +41,17 @@
 namespace {
 
 constexpr float kTwoPi = 6.283185307f;
+// settle_tol is a percentage of the target speed, floored at the old flat
+// 0.05 turns/s — never tighter than what already worked at low speed, only
+// loosens once settle_tol_pct of the target exceeds that floor (above ~2
+// rps at the default 2.5%). Also covers target=0 (the descent-to-zero step
+// after every ramp), where a pure percentage would be an unsatisfiable 0.
+constexpr float kMinSettleTolTurnsS = 0.05f;
+
+float effective_settle_tol(float target_turns_s, float settle_tol_pct) {
+	return std::max(kMinSettleTolTurnsS,
+		std::fabs(target_turns_s) * settle_tol_pct / 100.0f);
+}
 
 PreyMotor* g_motor = nullptr;
 std::atomic<bool> g_stop{false};
@@ -59,7 +70,7 @@ struct Args {
 	float rps_max = 6.0f;
 	float rps_step = 0.2f;
 	float hold_s = 2.0f;
-	float settle_tol = 0.05f;
+	float settle_tol_pct = 2.5f;
 	float settle_hold_s = 0.2f;
 	float sample_hz = 100.0f;
 	float torque_constant = 0.0827f;
@@ -78,7 +89,7 @@ void print_usage() {
 	std::cerr <<
 		"Usage: test_motor_inertia_calibration [--config <arena_experiment.json>]\n"
 		"    [--rps-min 1.0] [--rps-max 6.0] [--rps-step 0.2] [--hold-s 2.0]\n"
-		"    [--settle-tol 0.05] [--settle-hold-s 0.2] [--sample-hz 100]\n"
+		"    [--settle-tol-pct 2.5] [--settle-hold-s 0.2] [--sample-hz 100]\n"
 		"    [--torque-constant 0.0827] [--max-step-wait-s 10] [--near-tol 0.1]\n"
 		"    [--grace-s 1.0] [--output <dir>] [--write-config] [--verbose]\n"
 		"\n"
@@ -87,6 +98,11 @@ void print_usage() {
 		"  torque = J*alpha + B*omega + tau_c*sign(omega) model to every sample\n"
 		"  from both trials. Prints the calibrated chain_inertia_kg_m2 /\n"
 		"  chain_viscous_friction_nm_s_per_rad / chain_static_friction_nm.\n"
+		"\n"
+		"  --settle-tol-pct: settle band as a percent of the target speed,\n"
+		"  floored at " + std::to_string(kMinSettleTolTurnsS) + " turns/s (never\n"
+		"  tighter than that floor; loosens once --settle-tol-pct of the target\n"
+		"  exceeds it).\n"
 		"\n"
 		"  The chain MUST be a closed loop (no physical end) — this test spins\n"
 		"  continuously for several minutes and does not track position.\n"
@@ -108,8 +124,8 @@ bool parse_args(int argc, char** argv, Args& args) {
 				args.rps_step = std::stof(argv[++i]);
 			} else if (std::strcmp(argv[i], "--hold-s") == 0 && i + 1 < argc) {
 				args.hold_s = std::stof(argv[++i]);
-			} else if (std::strcmp(argv[i], "--settle-tol") == 0 && i + 1 < argc) {
-				args.settle_tol = std::stof(argv[++i]);
+			} else if (std::strcmp(argv[i], "--settle-tol-pct") == 0 && i + 1 < argc) {
+				args.settle_tol_pct = std::stof(argv[++i]);
 			} else if (std::strcmp(argv[i], "--settle-hold-s") == 0 && i + 1 < argc) {
 				args.settle_hold_s = std::stof(argv[++i]);
 			} else if (std::strcmp(argv[i], "--sample-hz") == 0 && i + 1 < argc) {
@@ -218,6 +234,7 @@ bool spin_to(PreyMotor& motor, const Args& args,
 	float min_vel = from_turns_s;
 	float max_vel = from_turns_s;
 	float max_iq_abs = 0.0f;
+	const float settle_tol = effective_settle_tol(target_turns_s, args.settle_tol_pct);
 	float effective_wait_s = args.max_step_wait_s;
 	bool grace_used = false;
 
@@ -258,7 +275,7 @@ bool spin_to(PreyMotor& motor, const Args& args,
 			std::chrono::steady_clock::now() - step_start).count();
 
 		if (!settled_at) {
-			if (std::fabs(last_vel - target_turns_s) <= args.settle_tol) {
+			if (std::fabs(last_vel - target_turns_s) <= settle_tol) {
 				if (!in_band_since) {
 					in_band_since = elapsed;
 				} else if (elapsed - *in_band_since >= args.settle_hold_s) {
@@ -308,7 +325,7 @@ bool spin_to(PreyMotor& motor, const Args& args,
 		const float swing = max_vel - min_vel;
 		const float end_offset = last_vel - target_turns_s;
 		std::string pattern;
-		if (swing > 2.0f * args.settle_tol) {
+		if (swing > 2.0f * settle_tol) {
 			// Why: crossing to both sides of the target is a genuinely
 			// different failure mode (loop hunting) from moving a lot but
 			// staying on one side (still ramping, or overshot and holding).
@@ -599,8 +616,8 @@ int main(int argc, char** argv) {
 		std::cerr << "--sample-hz must be > 0\n";
 		return 1;
 	}
-	if (args.settle_tol <= 0.0f) {
-		std::cerr << "--settle-tol must be > 0\n";
+	if (args.settle_tol_pct <= 0.0f) {
+		std::cerr << "--settle-tol-pct must be > 0\n";
 		return 1;
 	}
 	if (args.settle_hold_s < 0.0f || args.hold_s < 0.0f) {
@@ -666,7 +683,8 @@ int main(int argc, char** argv) {
 		args.rps_step);
 	std::cout << "Sweeping " << targets.size() << " targets from " << args.rps_min
 		<< " to " << args.rps_max << " turns/s (step " << args.rps_step << ").\n"
-		<< "Settle: within +/-" << args.settle_tol << " turns/s held "
+		<< "Settle: within +/-" << args.settle_tol_pct << "% of target (floor "
+		<< kMinSettleTolTurnsS << " turns/s) held "
 		<< args.settle_hold_s << "s; dwell " << args.hold_s << "s after settling.\n"
 		<< "The chain must be a closed loop — this does not track position.\n"
 		<< "Ctrl-C to abort.\n";
