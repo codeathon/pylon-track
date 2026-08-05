@@ -494,14 +494,18 @@ test does not change motor behavior unless you save its output there
    the sweep) and reports whether it actually settled, so a kick that doesn't
    work on this hardware is caught in seconds instead of after minutes of
    sweeping. `--no-kick-smoke-test` skips this.
-   - Optionally, `--schedule-gains` sends `Set_Vel_Gains` before each step,
-     switching between a low- and high-speed ODrive gain pair at
-     `--gain-switch-turns-s` — useful if a single fixed gain pair can't cover
-     the full `--rps-min`–`--rps-max` range without either undershooting at
-     low speed or oscillating at high speed. Off by default; see the flags
-     table below. This is a calibration-only tool (switches happen between
-     steps, not guaranteed at full mechanical rest during Trial A's
-     cumulative ramp) — not a pattern to reuse for live production control.
+   - Optionally, `--schedule-gains` sends `Set_Vel_Gains` before each step:
+     `vel_gain` fixed at `--vel-gain`, `vel_integrator_gain` linearly
+     interpolated between `--vel-integrator-min` (at `--rps-min`) and
+     `--vel-integrator-max` (at `--rps-max`) based on the upcoming step's
+     target *speed*, not step count — a "down to 0" step gets the low-speed
+     gain regardless of how far into the sweep it is. Useful if a single
+     fixed gain can't cover the full `--rps-min`–`--rps-max` range without
+     either undershooting at low speed or oscillating at high speed. Off by
+     default; see the flags table below. This is a calibration-only tool
+     (switches happen between steps, not guaranteed at full mechanical rest
+     during Trial A's cumulative ramp) — not a pattern to reuse for live
+     production control.
 1. **Trial A (cumulative ramp):** starting from a stop, step to `--rps-min`
    (default 1.0 turns/s), time how long it takes to settle, hold there for
    `--hold-s` (default 2s), then step to the *next* target from wherever the
@@ -638,10 +642,10 @@ still written to CSV but no regression is run on an aborted sweep.
 | `--kick-speed <turns/s>` | `LabMotionLimits::kKickFixedTurnsS` (5.0) | Flat breakaway-kick speed, regardless of target |
 | `--kick-cutoff-frac <0-1>` | `LabMotionLimits::kKickCutoffFraction` (0.8) | Swap from the kick to the literal target once \|measured\| reaches this fraction of \|target\| |
 | `--no-kick-smoke-test` | off | Skip the pre-Trial-A kick smoke test |
-| `--schedule-gains` | off | Before each step, sends `Set_Vel_Gains` over CAN (runtime-only — doesn't touch `odrivetool`'s saved config) with the low or high gain pair depending on which side of `--gain-switch-turns-s` the upcoming target falls on. Requires all four `--vel-*-low`/`--vel-*-high` values (no default — a wrong guess drives the motor) |
-| `--gain-switch-turns-s <turns/s>` | `3.0` | Threshold between the low and high gain pairs |
-| `--vel-gain-low` / `--vel-integrator-gain-low` | none | ODrive gains used when the upcoming target's magnitude is under `--gain-switch-turns-s` |
-| `--vel-gain-high` / `--vel-integrator-gain-high` | none | ODrive gains used at or above `--gain-switch-turns-s` |
+| `--schedule-gains` | off | Before each step, sends `Set_Vel_Gains` over CAN (runtime-only — doesn't touch `odrivetool`'s saved config): `vel_gain` fixed at `--vel-gain`, `vel_integrator_gain` linearly interpolated between `--vel-integrator-min`/`--vel-integrator-max` by the upcoming target's speed |
+| `--vel-gain <val>` | none | Fixed proportional gain used whenever `--schedule-gains` is on (no default — a wrong guess drives the motor) |
+| `--vel-integrator-min <val>` | `0.04` | `vel_integrator_gain` at `--rps-min` (and below, e.g. descent-to-0 steps) |
+| `--vel-integrator-max <val>` | `0.15` | `vel_integrator_gain` at `--rps-max` |
 | `--output <dir>` | `tests/output` | Root for `motor_inertia_calibration/<timestamp>/{samples,steps}.csv` |
 | `--write-config` | off | Merge-write the fitted values into `--config`'s `motor` section |
 | `--verbose` | off | Debug logging |

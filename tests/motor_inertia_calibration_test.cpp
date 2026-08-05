@@ -99,21 +99,23 @@ struct Args {
 	bool smoke_test_kick = true;
 	float kick_speed = LabMotionLimits::kKickFixedTurnsS;
 	float kick_cutoff_frac = LabMotionLimits::kKickCutoffFraction;
-	// Optional velocity-loop gain scheduling: switches ODrive vel_gain/
-	// vel_integrator_gain by CAN (Set_Vel_Gains, runtime-only — does not
-	// touch odrivetool's saved config) depending on which side of
-	// --gain-switch-turns-s the upcoming target falls on. Off by default —
-	// leaves whatever's already configured on the ODrive alone. This
-	// switches gains right before each step, not necessarily at true
-	// mechanical rest (Trial A is a cumulative ramp, not stop-start) — fine
-	// for a monitored bench calibration, not something to reuse for live
-	// mid-motion switching in production control.
+	// Optional velocity-loop gain scheduling: before each step, sends
+	// Set_Vel_Gains over CAN (runtime-only — does not touch odrivetool's
+	// saved config) with vel_integrator_gain linearly interpolated between
+	// --vel-integrator-min (at --rps-min) and --vel-integrator-max (at
+	// --rps-max) based on the upcoming step's target speed — not step count,
+	// since a "down to 0" step should get the low-speed gain regardless of
+	// how far into the sweep it is. vel_gain (proportional) stays fixed at
+	// --vel-gain throughout; Set_Vel_Gains sets both fields in one message
+	// either way. Off by default — leaves whatever's already configured on
+	// the ODrive alone. Switches happen right before each step, not
+	// necessarily at true mechanical rest (Trial A is a cumulative ramp, not
+	// stop-start) — fine for a monitored bench calibration, not something to
+	// reuse for live mid-motion switching in production control.
 	bool schedule_gains = false;
-	float gain_switch_turns_s = 3.0f;
-	float vel_gain_low = 0.0f;
-	float vel_integrator_gain_low = 0.0f;
-	float vel_gain_high = 0.0f;
-	float vel_integrator_gain_high = 0.0f;
+	float vel_gain = 0.0f;
+	float vel_integrator_min = 0.04f;
+	float vel_integrator_max = 0.15f;
 	bool write_config = false;
 	bool verbose = false;
 };
@@ -126,8 +128,7 @@ void print_usage() {
 		"    [--torque-constant 0.0827] [--max-step-wait-s 10] [--near-tol 0.1]\n"
 		"    [--grace-s 1.0] [--iq-sign -1] [--kick-speed 5.0]\n"
 		"    [--kick-cutoff-frac 0.8] [--no-kick-smoke-test] [--schedule-gains]\n"
-		"    [--gain-switch-turns-s 3.0] [--vel-gain-low V] [--vel-integrator-gain-low V]\n"
-		"    [--vel-gain-high V] [--vel-integrator-gain-high V]\n"
+		"    [--vel-gain V] [--vel-integrator-min 0.04] [--vel-integrator-max 0.15]\n"
 		"    [--output <dir>] [--write-config] [--verbose]\n"
 		"\n"
 		"  Two-trial step-response sweep of the prey chain motor from --rps-min\n"
@@ -156,14 +157,17 @@ void print_usage() {
 		"  a kick that doesn't work. Pass --no-kick-smoke-test to skip.\n"
 		"\n"
 		"  --schedule-gains: before each step, sends Set_Vel_Gains (CAN, runtime-\n"
-		"  only — does not touch odrivetool's saved config) with --vel-gain-low/\n"
-		"  --vel-integrator-gain-low if the upcoming target's magnitude is under\n"
-		"  --gain-switch-turns-s, otherwise the *-high pair. Off by default —\n"
-		"  leaves whatever's already configured alone. All four gain values are\n"
-		"  required when this is on; there is no default, since a wrong guess\n"
-		"  here drives the motor. Switches happen right before a step, not\n"
-		"  necessarily at full mechanical rest (Trial A is a cumulative ramp) —\n"
-		"  fine for a monitored bench run, not a pattern for live production use.\n"
+		"  only — does not touch odrivetool's saved config): vel_gain fixed at\n"
+		"  --vel-gain, vel_integrator_gain linearly interpolated between\n"
+		"  --vel-integrator-min (at --rps-min) and --vel-integrator-max (at\n"
+		"  --rps-max) based on the upcoming step's target speed, not step count —\n"
+		"  a \"down to 0\" step gets the low-speed gain regardless of how far into\n"
+		"  the sweep it is. Off by default — leaves whatever's already configured\n"
+		"  alone. --vel-gain is required when this is on; there is no default,\n"
+		"  since a wrong guess here drives the motor. Switches happen right\n"
+		"  before a step, not necessarily at full mechanical rest (Trial A is a\n"
+		"  cumulative ramp) — fine for a monitored bench run, not a pattern for\n"
+		"  live production use.\n"
 		"\n"
 		"  The chain MUST be a closed loop (no physical end) — this test spins\n"
 		"  continuously for several minutes and does not track position.\n"
@@ -209,16 +213,12 @@ bool parse_args(int argc, char** argv, Args& args) {
 				args.smoke_test_kick = false;
 			} else if (std::strcmp(argv[i], "--schedule-gains") == 0) {
 				args.schedule_gains = true;
-			} else if (std::strcmp(argv[i], "--gain-switch-turns-s") == 0 && i + 1 < argc) {
-				args.gain_switch_turns_s = std::stof(argv[++i]);
-			} else if (std::strcmp(argv[i], "--vel-gain-low") == 0 && i + 1 < argc) {
-				args.vel_gain_low = std::stof(argv[++i]);
-			} else if (std::strcmp(argv[i], "--vel-integrator-gain-low") == 0 && i + 1 < argc) {
-				args.vel_integrator_gain_low = std::stof(argv[++i]);
-			} else if (std::strcmp(argv[i], "--vel-gain-high") == 0 && i + 1 < argc) {
-				args.vel_gain_high = std::stof(argv[++i]);
-			} else if (std::strcmp(argv[i], "--vel-integrator-gain-high") == 0 && i + 1 < argc) {
-				args.vel_integrator_gain_high = std::stof(argv[++i]);
+			} else if (std::strcmp(argv[i], "--vel-gain") == 0 && i + 1 < argc) {
+				args.vel_gain = std::stof(argv[++i]);
+			} else if (std::strcmp(argv[i], "--vel-integrator-min") == 0 && i + 1 < argc) {
+				args.vel_integrator_min = std::stof(argv[++i]);
+			} else if (std::strcmp(argv[i], "--vel-integrator-max") == 0 && i + 1 < argc) {
+				args.vel_integrator_max = std::stof(argv[++i]);
 			} else if (std::strcmp(argv[i], "--write-config") == 0) {
 				args.write_config = true;
 			} else if (std::strcmp(argv[i], "--verbose") == 0) {
@@ -686,14 +686,28 @@ bool write_steps_csv(const std::string& path, const std::vector<StepResult>& ste
 	return true;
 }
 
-// Tracks which gain pair is currently applied so apply_gains_for_target()
-// only sends Set_Vel_Gains when the regime actually changes, not before
-// every single step.
+// Tracks the currently-applied vel_integrator_gain so apply_gains_for_target()
+// only sends Set_Vel_Gains when it actually changes enough to matter, not
+// before every single step.
 struct GainScheduleState {
 	bool have_current = false;
-	float vel_gain = 0.0f;
 	float vel_integrator_gain = 0.0f;
 };
+
+// Linear interpolation by target *speed* (not step count): vel_integrator_min
+// at --rps-min, vel_integrator_max at --rps-max, clamped outside that range —
+// e.g. a "down to 0" step lands below --rps-min and gets vel_integrator_min,
+// regardless of how far into the sweep it is.
+float scaled_vel_integrator_gain(const Args& args, float target_turns_s) {
+	if (args.rps_max <= args.rps_min) {
+		return args.vel_integrator_min;
+	}
+	const float t = (std::fabs(target_turns_s) - args.rps_min)
+		/ (args.rps_max - args.rps_min);
+	const float t_clamped = std::min(1.0f, std::max(0.0f, t));
+	return args.vel_integrator_min
+		+ t_clamped * (args.vel_integrator_max - args.vel_integrator_min);
+}
 
 void apply_gains_for_target(PreyMotor& motor, const Args& args, float target_turns_s,
 	GainScheduleState& state)
@@ -701,20 +715,15 @@ void apply_gains_for_target(PreyMotor& motor, const Args& args, float target_tur
 	if (!args.schedule_gains) {
 		return;
 	}
-	const bool low = std::fabs(target_turns_s) < args.gain_switch_turns_s;
-	const float want_vel_gain = low ? args.vel_gain_low : args.vel_gain_high;
-	const float want_vel_integrator_gain = low ? args.vel_integrator_gain_low
-		: args.vel_integrator_gain_high;
-	if (state.have_current && std::fabs(want_vel_gain - state.vel_gain) < 1e-6f
-			&& std::fabs(want_vel_integrator_gain - state.vel_integrator_gain) < 1e-6f) {
+	const float want_vel_integrator_gain = scaled_vel_integrator_gain(args, target_turns_s);
+	if (state.have_current
+			&& std::fabs(want_vel_integrator_gain - state.vel_integrator_gain) < 1e-4f) {
 		return;
 	}
-	if (motor.set_vel_gains(want_vel_gain, want_vel_integrator_gain)) {
-		std::cout << "  gains -> vel_gain=" << want_vel_gain
+	if (motor.set_vel_gains(args.vel_gain, want_vel_integrator_gain)) {
+		std::cout << "  gains -> vel_gain=" << args.vel_gain
 			<< " vel_integrator_gain=" << want_vel_integrator_gain
-			<< " (target " << target_turns_s << " turns/s, "
-			<< (low ? "low" : "high") << " regime)\n";
-		state.vel_gain = want_vel_gain;
+			<< " (target " << target_turns_s << " turns/s)\n";
 		state.vel_integrator_gain = want_vel_integrator_gain;
 		state.have_current = true;
 	} else {
@@ -773,15 +782,17 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 	if (args.schedule_gains) {
-		if (args.gain_switch_turns_s <= 0.0f) {
-			std::cerr << "--gain-switch-turns-s must be > 0\n";
+		if (args.vel_gain <= 0.0f) {
+			std::cerr << "--schedule-gains requires --vel-gain (> 0) — no default, "
+				"a wrong guess here drives the motor\n";
 			return 1;
 		}
-		if (args.vel_gain_low <= 0.0f || args.vel_integrator_gain_low <= 0.0f
-				|| args.vel_gain_high <= 0.0f || args.vel_integrator_gain_high <= 0.0f) {
-			std::cerr << "--schedule-gains requires all four of --vel-gain-low/"
-				"--vel-integrator-gain-low/--vel-gain-high/--vel-integrator-gain-high "
-				"(> 0) — no default, a wrong guess here drives the motor\n";
+		if (args.vel_integrator_min <= 0.0f || args.vel_integrator_max <= 0.0f) {
+			std::cerr << "--vel-integrator-min/--vel-integrator-max must be > 0\n";
+			return 1;
+		}
+		if (args.vel_integrator_max < args.vel_integrator_min) {
+			std::cerr << "--vel-integrator-max must be >= --vel-integrator-min\n";
 			return 1;
 		}
 	}

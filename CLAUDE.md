@@ -85,10 +85,11 @@ this file is just what a fresh session needs to not re-derive from scratch.
   `PreyMotor::set_vel_gains()` (`Set_Vel_Gains`, CAN cmd `0x01b`, runtime-
   only — not persisted, `odrivetool`'s `save_configuration()` is separate)
   exist for exactly this, and
-  `tests/motor_inertia_calibration_test.cpp --schedule-gains` switches
-  between a low/high pair by target speed *between calibration steps* — not
-  wired into any live production control path, since switching gains
-  mid-motion needs bumpless-transfer handling this repo doesn't have yet.
+  `tests/motor_inertia_calibration_test.cpp --schedule-gains` linearly
+  interpolates vel_integrator_gain between --vel-integrator-min/-max by
+  target speed (fixed --vel-gain) *between calibration steps* — not wired
+  into any live production control path, since switching gains mid-motion
+  needs bumpless-transfer handling this repo doesn't have yet.
   If chain motor speed steps oscillate again after any future current-limit
   or gain change, this is the same class of issue, not a code bug.
 - `PreyMotor`'s breakaway kick (`kKick*` in `lab_motion_limits.h`) commands a
