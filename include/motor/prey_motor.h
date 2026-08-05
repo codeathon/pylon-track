@@ -91,10 +91,27 @@ private:
 	std::chrono::steady_clock::time_point last_cmd_time_{};
 	bool have_last_cmd_ = false;
 
+	// Breakaway-kick state (see LabMotionLimits::kKick*) — same single-thread
+	// assumption as the feed-forward state above. pursuing_turns_s_ is the
+	// last *literal* target a caller asked for (distinct from
+	// last_cmd_turns_s_, which may hold the boosted kick value actually sent).
+	float pursuing_turns_s_ = 0.0f;
+	bool kicking_ = false;
+	std::chrono::steady_clock::time_point kick_start_time_{};
+
 	void refresh_status() const;
 	// torque_ff (N*m) for a Set_Input_Vel(target_turns_s) call, from the
 	// chain_inertia_kg_m2/chain_viscous_friction_nm_s_per_rad/
 	// chain_static_friction_nm model. Returns 0 when uncalibrated, on the
 	// first command, or after a stale gap (motor was idle/stopped).
 	float compute_torque_ff_nm(float target_turns_s);
+	// Returns the velocity to actually command for this target — boosted
+	// past target for LabMotionLimits::kKickDurationS if this is a fresh
+	// breakaway from rest into a low target speed, otherwise target itself.
+	float apply_kick(float target_turns_s);
+	// Shared by set_velocity_turns_s() and apply()'s Velocity branch — the
+	// two paths a caller actually commands chain motion through — so kick
+	// and feed-forward behavior stay identical everywhere the motor is
+	// driven, including test_motor_inertia_calibration.
+	bool send_velocity_command(float target_turns_s);
 };

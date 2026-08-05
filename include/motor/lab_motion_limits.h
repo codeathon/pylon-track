@@ -10,6 +10,24 @@ namespace LabMotionLimits {
 // Below this Set_Input_Vel, the axis often sits in closed-loop with ~0 motion.
 constexpr float kMinViableTurnsPerS = 1.5f;
 
+// Breakaway kick: PreyMotor briefly overcommands past target when starting
+// from rest into a low target speed, then falls back to the literal target.
+// Below kMinViableTurnsPerS this is close to necessary; up to kKickMaxTargetTurnsS
+// it still measurably helps get off static friction. Tune against real
+// hardware, not derived from any measurement — start conservative.
+constexpr float kKickMaxTargetTurnsS = 3.0f;
+// Only kicks when starting from near-rest (a genuine breakaway), not for
+// every intermediate step of an already-moving low-speed trajectory —
+// otherwise a deliberate slow multi-step ramp would jerk at each step.
+constexpr float kKickFromRestTurnsS = 0.3f;
+constexpr float kKickBoostTurnsS = 1.0f;
+constexpr float kKickDurationS = 0.3f;
+// Below this, two successive commands count as "the same target" (floating-
+// point jitter from repeated unit conversions, not a genuine change) — keeps
+// a repeated Set_Input_Vel(same target) from re-evaluating and cancelling an
+// in-progress kick before kKickDurationS elapses.
+constexpr float kKickRetriggerDeltaTurnsS = 0.05f;
+
 // Time for sample_vel to approach a step command at ~1.5–1.8 turns/s.
 constexpr float kSpinupLeadInS = 1.2f;
 
