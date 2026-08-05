@@ -482,8 +482,19 @@ non-zero in `config/arena_experiment.json`'s `motor` section — running this
 test does not change motor behavior unless you save its output there
 (`--write-config`) or paste it in by hand.
 
-### How it works — two trials, then two regressions
+### How it works — kick tuning, then two trials, then two regressions
 
+0. **Kick tuning (before Trial A):** `PreyMotor` briefly overcommands past
+   target when starting a low-speed move from rest (a breakaway kick — see
+   `kKick*` in `include/motor/lab_motion_limits.h`), and both trials below
+   command through that same path. Before Trial A runs, this test tunes the
+   kick boost against `--rps-min` (the hardest target in the sweep): spins
+   from a stop to `--rps-min`, and if it never settles, increases the boost
+   by `--kick-tune-step` (default 0.2 turns/s); if it settles but overshoots
+   past `--rps-min` by more than `--kick-tune-overshoot-margin` (default 0.3
+   turns/s), decreases it; otherwise it's converged. Up to
+   `--kick-tune-max-iters` attempts (default 6). `--no-tune-kick` skips this
+   and uses `--kick-boost` (default `LabMotionLimits::kKickBoostTurnsS`) as-is.
 1. **Trial A (cumulative ramp):** starting from a stop, step to `--rps-min`
    (default 1.0 turns/s), time how long it takes to settle, hold there for
    `--hold-s` (default 2s), then step to the *next* target from wherever the
@@ -617,6 +628,11 @@ still written to CSV but no regression is run on an aborted sweep.
 | `--near-tol <turns/s>` | `0.1` | If still unsettled right at `--max-step-wait-s` but within this of target, grant one `--grace-s` extension instead of giving up |
 | `--grace-s <s>` | `1.0` | Length of that one-time extension. `steps.csv`'s `used_grace` column and `settle_time_s` reflect whichever attempt it took |
 | `--iq-sign <1 or -1>` | `-1` | Multiplies `Iq_Measured` before the dynamic fit. Defaults to `-1` because this rig's `Iq_Measured` sign convention disagrees with the encoder's positive-velocity direction (confirmed on hardware). Pass `1` only if that's ever fixed/rewired — if `chain_inertia_kg_m2`, `chain_viscous_friction_nm_s_per_rad`, and `chain_static_friction_nm` all come out negative together, that's this sign issue again, not noise |
+| `--kick-boost <turns/s>` | `LabMotionLimits::kKickBoostTurnsS` | Starting (or, with `--no-tune-kick`, final) breakaway-kick boost. See kick tuning above |
+| `--kick-tune-max-iters <n>` | `6` | Max kick-tuning attempts before Trial A, using whatever boost it last tried |
+| `--kick-tune-step <turns/s>` | `0.2` | How much the kick-tuning phase adjusts the boost per attempt |
+| `--kick-tune-overshoot-margin <turns/s>` | `0.3` | How far above `--rps-min` counts as "overshot enough to back off the kick" during tuning |
+| `--no-tune-kick` | off | Skip kick tuning; use `--kick-boost` as-is |
 | `--output <dir>` | `tests/output` | Root for `motor_inertia_calibration/<timestamp>/{samples,steps}.csv` |
 | `--write-config` | off | Merge-write the fitted values into `--config`'s `motor` section |
 | `--verbose` | off | Debug logging |
@@ -626,7 +642,10 @@ still written to CSV but no regression is run on an aborted sweep.
 - `samples.csv` — every logged sample: `t_s, trial, step_index, direction,
   target_turns_s, measured_turns_s, iq_measured_a, iq_valid`.
 - `steps.csv` — one row per up/down transition: `trial, step_index,
-  direction, from_turns_s, to_turns_s, delta_turns_s, settle_time_s, ok`.
+  direction, from_turns_s, to_turns_s, delta_turns_s, settle_time_s,
+  end_measured_turns_s, max_vel_turns_s, used_grace, ok`. Kick-tuning
+  attempts (trial `0`) aren't included — they're a separate pre-sweep pass,
+  not part of the calibration.
 - Printed summary: the timing cross-check fit, then the dynamic fit's R² and
   the three calibrated values, formatted ready to paste into
   `config/arena_experiment.json`'s `motor` section.

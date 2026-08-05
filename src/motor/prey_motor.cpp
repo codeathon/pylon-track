@@ -129,7 +129,7 @@ float PreyMotor::apply_kick(float target_turns_s) {
 		return target_turns_s;
 	}
 	const float sign = (target_turns_s >= 0.0f) ? 1.0f : -1.0f;
-	return target_turns_s + sign * LabMotionLimits::kKickBoostTurnsS;
+	return target_turns_s + sign * kick_boost_turns_s_;
 }
 
 bool PreyMotor::send_velocity_command(float target_turns_s) {

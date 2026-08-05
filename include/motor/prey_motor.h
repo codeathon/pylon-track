@@ -4,6 +4,7 @@
 #include <mutex>
 #include <string>
 #include "motor/i_motor.h"
+#include "motor/lab_motion_limits.h"
 #include "motor/odrive_can.h"
 
 // ODrive S1 prey/toy chain motor — converts chain mm/s ↔ motor turns/s.
@@ -60,6 +61,13 @@ public:
 	bool try_get_active_errors(uint32_t& active_errors, uint32_t& disarm_reason,
 		int timeout_ms = 0) const;
 
+	// Overrides the breakaway-kick boost magnitude (LabMotionLimits::
+	// kKickBoostTurnsS by default) — used by test_motor_inertia_calibration's
+	// kick-tuning phase to find a good value against real hardware before the
+	// real sweep runs, rather than trusting an unvalidated constant.
+	void set_kick_boost_turns_s(float boost) { kick_boost_turns_s_ = boost; }
+	float kick_boost_turns_s() const { return kick_boost_turns_s_; }
+
 	// Chain ↔ motor unit conversions (public for motion planner + calibration).
 	float chain_mps_to_turns_s(float chain_mps) const;
 	float turns_s_to_chain_mps(float turns_s) const;
@@ -98,6 +106,7 @@ private:
 	float pursuing_turns_s_ = 0.0f;
 	bool kicking_ = false;
 	std::chrono::steady_clock::time_point kick_start_time_{};
+	float kick_boost_turns_s_ = LabMotionLimits::kKickBoostTurnsS;
 
 	void refresh_status() const;
 	// torque_ff (N*m) for a Set_Input_Vel(target_turns_s) call, from the
