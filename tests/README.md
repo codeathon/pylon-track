@@ -14,6 +14,23 @@ All outputs go to `tests/output/<suite>/<timestamp>_<label>/` (gitignored).
 | `test_param_sweep` | Parameter sweeps + resolution / binning / compound camera presets |
 | `test_latency` | Two-object tracking benchmark: speeds, centroids, distance, latency |
 | `test_mount_height` | Per-height resolution check: annotated stills + the latency benchmark |
+| `test_chase_hunt` | Camera + dual track + MotionPlanner flee (hunt smoke; needs CAN) |
+
+### `test_chase_hunt` — camera + motor hunt smoke
+
+End-to-end lab check (not CI): Basler on → ODrive on → wait for ferret+prey
+distance → MotionPlanner flee of `--distance-mm` in `--duration-ms`.
+
+```bash
+cd build
+make test_chase_hunt
+./bin/test_chase_hunt --config ../config/arena_experiment.json \
+  --distance-mm 200 --duration-ms 2000 --max-accel 50 --warmup-s 10
+```
+
+Protocol: keep the arena **empty** during warmup, then introduce both animals.
+Pass criteria: dual track stable, plan feasible, encoder travel within
+max(15 mm, 10% of request). Use `--dry-run` to stop after track + plan.
 
 ---
 

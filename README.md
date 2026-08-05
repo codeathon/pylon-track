@@ -282,6 +282,17 @@ Sweep after hardware changes:
 ./bin/test_hunt_sim --config config/arena_experiment.json --duration-s 120 --max-accel 50
 ```
 
+**Camera + motor hunt smoke** (`test_chase_hunt`): open camera, connect ODrive,
+wait until ferret+prey are both tracked, then MotionPlanner flees a set
+distance/time (chase-faithful `start_plan`/`tick` at ~50 Hz).
+
+```bash
+./bin/test_chase_hunt --config ../config/arena_experiment.json \
+  --distance-mm 200 --duration-ms 2000 --max-accel 50 --warmup-s 10
+# Empty arena during warmup, then introduce both animals. Ctrl-C aborts.
+# --dry-run stops after dual-track + plan (no motor motion).
+```
+
 ### Arena config (`config/arena_experiment.json`)
 
 | Section | Key fields | Purpose |
@@ -696,6 +707,8 @@ metric interpretation.
 | `test_param_sweep` | `make test_param_sweep` | Calibration: parameter + preset sweeps |
 | `test_latency` | `make test_latency` | Calibration: latency benchmark |
 | `test_mount_height` | `make test_mount_height` | Calibration: mount height validation |
+| `test_chase_hunt` | `make test_chase_hunt` | HIL: camera + dual track + MotionPlanner flee |
+| `test_hunt_sim` | `make test_hunt_sim` | Motor-only scripted hunt playlist |
 | `run_rt` | `make run_rt` | Run with SCHED_FIFO priority |
 | `install_udev` | `make install_udev` | Install Basler USB udev rules |
 | `can0_host` (via `make`) | included in default `make` | Install/enable SocketCAN can0 (sudo) |

@@ -119,3 +119,19 @@ target_link_libraries(test_hunt_sim PRIVATE
 	nlohmann_json::nlohmann_json
 	pthread
 )
+
+# Camera + dual-track + MotionPlanner flee (hardware-in-the-loop hunt smoke).
+# Links calib_common for vision/Pylon and explicit motor sources (no LabJack).
+add_executable(test_chase_hunt
+	chase_hunt_integration_suite.cpp
+	${CMAKE_SOURCE_DIR}/src/motor/odrive_can.cpp
+	${CMAKE_SOURCE_DIR}/src/motor/prey_motor.cpp
+	${CMAKE_SOURCE_DIR}/src/motor/motion_planner.cpp
+	${CMAKE_SOURCE_DIR}/src/experiment/arena_config.cpp
+	${CMAKE_SOURCE_DIR}/src/calibrate/setup_util.cpp
+)
+target_link_libraries(test_chase_hunt PRIVATE calib_common)
+set_target_properties(test_chase_hunt PROPERTIES
+	INSTALL_RPATH "${PYLON_ROOT}/lib"
+	BUILD_RPATH   "${PYLON_ROOT}/lib"
+)
