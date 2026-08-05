@@ -499,10 +499,13 @@ test does not change motor behavior unless you save its output there
      interpolated between `--vel-integrator-min` (at `--rps-min`) and
      `--vel-integrator-max` (at `--rps-max`) based on the upcoming step's
      target *speed*, not step count — a "down to 0" step gets the low-speed
-     gain regardless of how far into the sweep it is. Useful if a single
-     fixed gain can't cover the full `--rps-min`–`--rps-max` range without
-     either undershooting at low speed or oscillating at high speed. Off by
-     default; see the flags table below. This is a calibration-only tool
+     gain regardless of how far into the sweep it is. Steps starting from
+     rest additionally get `--vel-integrator-from-rest-boost` (default 1.3x)
+     applied on top, since breaking static friction needs more integral
+     authority than continuing an already-moving trajectory. Useful if a
+     single fixed gain can't cover the full `--rps-min`–`--rps-max` range
+     without either undershooting at low speed or oscillating at high speed.
+     Off by default; see the flags table below. This is a calibration-only tool
      (switches happen between steps, not guaranteed at full mechanical rest
      during Trial A's cumulative ramp) — not a pattern to reuse for live
      production control.
@@ -646,6 +649,7 @@ still written to CSV but no regression is run on an aborted sweep.
 | `--vel-gain <val>` | none | Fixed proportional gain used whenever `--schedule-gains` is on (no default — a wrong guess drives the motor) |
 | `--vel-integrator-min <val>` | `0.04` | `vel_integrator_gain` at `--rps-min` (and below, e.g. descent-to-0 steps) |
 | `--vel-integrator-max <val>` | `0.15` | `vel_integrator_gain` at `--rps-max` |
+| `--vel-integrator-from-rest-boost <val>` | `1.3` | Multiplies the interpolated `vel_integrator_gain` for steps starting from rest (breakaway) — overcoming static friction needs more integral authority than continuing an already-moving trajectory. Not clamped to `--vel-integrator-max`, so near `--rps-max` this can push above it |
 | `--output <dir>` | `tests/output` | Root for `motor_inertia_calibration/<timestamp>/{samples,steps}.csv` |
 | `--write-config` | off | Merge-write the fitted values into `--config`'s `motor` section |
 | `--verbose` | off | Debug logging |

@@ -116,6 +116,16 @@ struct Args {
 	float vel_gain = 0.0f;
 	float vel_integrator_min = 0.04f;
 	float vel_integrator_max = 0.15f;
+	// Starting a step from rest (breakaway, overcoming static friction) needs
+	// more integral authority than continuing an already-moving trajectory —
+	// multiplies the interpolated vel_integrator_gain when the step's
+	// from_turns_s is near zero and it's ramping up (same "from rest"
+	// definition as PreyMotor's kick, LabMotionLimits::kKickFromRestTurnsS).
+	// Not clamped to --vel-integrator-max — near --rps-max this can push
+	// above it, which may reintroduce the high-speed oscillation a lower
+	// steady-state gain was chosen to avoid; watch for that specifically on
+	// Trial B's "up" steps at the top of the range.
+	float vel_integrator_from_rest_boost = 1.3f;
 	bool write_config = false;
 	bool verbose = false;
 };
@@ -129,6 +139,7 @@ void print_usage() {
 		"    [--grace-s 1.0] [--iq-sign -1] [--kick-speed 5.0]\n"
 		"    [--kick-cutoff-frac 0.8] [--no-kick-smoke-test] [--schedule-gains]\n"
 		"    [--vel-gain V] [--vel-integrator-min 0.04] [--vel-integrator-max 0.15]\n"
+		"    [--vel-integrator-from-rest-boost 1.3]\n"
 		"    [--output <dir>] [--write-config] [--verbose]\n"
 		"\n"
 		"  Two-trial step-response sweep of the prey chain motor from --rps-min\n"
@@ -162,12 +173,15 @@ void print_usage() {
 		"  --vel-integrator-min (at --rps-min) and --vel-integrator-max (at\n"
 		"  --rps-max) based on the upcoming step's target speed, not step count —\n"
 		"  a \"down to 0\" step gets the low-speed gain regardless of how far into\n"
-		"  the sweep it is. Off by default — leaves whatever's already configured\n"
-		"  alone. --vel-gain is required when this is on; there is no default,\n"
-		"  since a wrong guess here drives the motor. Switches happen right\n"
-		"  before a step, not necessarily at full mechanical rest (Trial A is a\n"
-		"  cumulative ramp) — fine for a monitored bench run, not a pattern for\n"
-		"  live production use.\n"
+		"  the sweep it is. Steps starting from rest (breakaway) additionally get\n"
+		"  vel_integrator_gain multiplied by --vel-integrator-from-rest-boost\n"
+		"  (default 1.3 = 30% higher) — not clamped to --vel-integrator-max, so\n"
+		"  near --rps-max this can push above it. Off by default — leaves\n"
+		"  whatever's already configured alone. --vel-gain is required when this\n"
+		"  is on; there is no default, since a wrong guess here drives the motor.\n"
+		"  Switches happen right before a step, not necessarily at full\n"
+		"  mechanical rest (Trial A is a cumulative ramp) — fine for a monitored\n"
+		"  bench run, not a pattern for live production use.\n"
 		"\n"
 		"  The chain MUST be a closed loop (no physical end) — this test spins\n"
 		"  continuously for several minutes and does not track position.\n"
@@ -219,6 +233,9 @@ bool parse_args(int argc, char** argv, Args& args) {
 				args.vel_integrator_min = std::stof(argv[++i]);
 			} else if (std::strcmp(argv[i], "--vel-integrator-max") == 0 && i + 1 < argc) {
 				args.vel_integrator_max = std::stof(argv[++i]);
+			} else if (std::strcmp(argv[i], "--vel-integrator-from-rest-boost") == 0
+					&& i + 1 < argc) {
+				args.vel_integrator_from_rest_boost = std::stof(argv[++i]);
 			} else if (std::strcmp(argv[i], "--write-config") == 0) {
 				args.write_config = true;
 			} else if (std::strcmp(argv[i], "--verbose") == 0) {
@@ -696,25 +713,40 @@ struct GainScheduleState {
 // Linear interpolation by target *speed* (not step count): vel_integrator_min
 // at --rps-min, vel_integrator_max at --rps-max, clamped outside that range —
 // e.g. a "down to 0" step lands below --rps-min and gets vel_integrator_min,
-// regardless of how far into the sweep it is.
-float scaled_vel_integrator_gain(const Args& args, float target_turns_s) {
+// regardless of how far into the sweep it is. Steps starting from rest
+// (breakaway — same "from rest" definition as PreyMotor's kick,
+// LabMotionLimits::kKickFromRestTurnsS) get the interpolated value
+// multiplied by --vel-integrator-from-rest-boost on top of that: overcoming
+// static friction from a stop needs more integral authority than continuing
+// an already-moving trajectory. Not clamped to --vel-integrator-max — see
+// the boost's doc comment in Args.
+float scaled_vel_integrator_gain(const Args& args, float target_turns_s, float from_turns_s) {
+	float base;
 	if (args.rps_max <= args.rps_min) {
-		return args.vel_integrator_min;
+		base = args.vel_integrator_min;
+	} else {
+		const float t = (std::fabs(target_turns_s) - args.rps_min)
+			/ (args.rps_max - args.rps_min);
+		const float t_clamped = std::min(1.0f, std::max(0.0f, t));
+		base = args.vel_integrator_min
+			+ t_clamped * (args.vel_integrator_max - args.vel_integrator_min);
 	}
-	const float t = (std::fabs(target_turns_s) - args.rps_min)
-		/ (args.rps_max - args.rps_min);
-	const float t_clamped = std::min(1.0f, std::max(0.0f, t));
-	return args.vel_integrator_min
-		+ t_clamped * (args.vel_integrator_max - args.vel_integrator_min);
+	const bool from_rest = std::fabs(from_turns_s) < LabMotionLimits::kKickFromRestTurnsS;
+	const bool ramping_up = std::fabs(target_turns_s) > std::fabs(from_turns_s);
+	if (from_rest && ramping_up) {
+		base *= args.vel_integrator_from_rest_boost;
+	}
+	return base;
 }
 
 void apply_gains_for_target(PreyMotor& motor, const Args& args, float target_turns_s,
-	GainScheduleState& state)
+	float from_turns_s, GainScheduleState& state)
 {
 	if (!args.schedule_gains) {
 		return;
 	}
-	const float want_vel_integrator_gain = scaled_vel_integrator_gain(args, target_turns_s);
+	const float want_vel_integrator_gain = scaled_vel_integrator_gain(args, target_turns_s,
+		from_turns_s);
 	if (state.have_current
 			&& std::fabs(want_vel_integrator_gain - state.vel_integrator_gain) < 1e-4f) {
 		return;
@@ -722,7 +754,8 @@ void apply_gains_for_target(PreyMotor& motor, const Args& args, float target_tur
 	if (motor.set_vel_gains(args.vel_gain, want_vel_integrator_gain)) {
 		std::cout << "  gains -> vel_gain=" << args.vel_gain
 			<< " vel_integrator_gain=" << want_vel_integrator_gain
-			<< " (target " << target_turns_s << " turns/s)\n";
+			<< " (target " << target_turns_s << " turns/s, from " << from_turns_s
+			<< ")\n";
 		state.vel_integrator_gain = want_vel_integrator_gain;
 		state.have_current = true;
 	} else {
@@ -794,6 +827,10 @@ int main(int argc, char** argv) {
 			std::cerr << "--vel-integrator-max must be >= --vel-integrator-min\n";
 			return 1;
 		}
+		if (args.vel_integrator_from_rest_boost <= 0.0f) {
+			std::cerr << "--vel-integrator-from-rest-boost must be > 0\n";
+			return 1;
+		}
 	}
 
 	Logger::instance().set_level(args.verbose ? LogLevel::Debug : LogLevel::Info);
@@ -852,7 +889,7 @@ int main(int argc, char** argv) {
 		std::cout << "Kick smoke test: breakaway from rest to " << args.rps_min
 			<< " turns/s (kick-speed " << args.kick_speed << ", cutoff "
 			<< (args.kick_cutoff_frac * 100.0f) << "% of target)...\n";
-		apply_gains_for_target(motor, args, args.rps_min, gain_state);
+		apply_gains_for_target(motor, args, args.rps_min, /*from_turns_s=*/0.0f, gain_state);
 		const auto smoke_t0 = std::chrono::steady_clock::now();
 		std::vector<Sample> smoke_samples; // discarded — not part of the calibration
 		StepResult smoke_step;
@@ -902,7 +939,7 @@ int main(int argc, char** argv) {
 	// --- Trial A: cumulative ramp (spin from wherever it already is) ---
 	float cur = 0.0f;
 	for (size_t i = 0; i < targets.size() && !aborted; ++i) {
-		apply_gains_for_target(motor, args, targets[i], gain_state);
+		apply_gains_for_target(motor, args, targets[i], cur, gain_state);
 		StepResult step;
 		spin_to(motor, args, t0, /*trial=*/1, static_cast<int>(i), "up",
 			cur, targets[i], samples, step, iq_success_count, iq_total_count);
@@ -913,7 +950,7 @@ int main(int argc, char** argv) {
 		}
 	}
 	if (!aborted) {
-		apply_gains_for_target(motor, args, 0.0f, gain_state);
+		apply_gains_for_target(motor, args, 0.0f, cur, gain_state);
 		StepResult step;
 		spin_to(motor, args, t0, /*trial=*/1, static_cast<int>(targets.size()),
 			"down", cur, 0.0f, samples, step, iq_success_count, iq_total_count);
@@ -924,7 +961,7 @@ int main(int argc, char** argv) {
 
 	// --- Trial B: reset to zero before every step ---
 	for (size_t i = 0; i < targets.size() && !aborted; ++i) {
-		apply_gains_for_target(motor, args, targets[i], gain_state);
+		apply_gains_for_target(motor, args, targets[i], /*from_turns_s=*/0.0f, gain_state);
 		StepResult up;
 		spin_to(motor, args, t0, /*trial=*/2, static_cast<int>(i), "up",
 			0.0f, targets[i], samples, up, iq_success_count, iq_total_count);
@@ -937,10 +974,11 @@ int main(int argc, char** argv) {
 		// attempt the descent regardless of whether "up" actually settled —
 		// leaving the motor at speed because one step failed is worse than
 		// one extra (likely also failing) data point.
-		apply_gains_for_target(motor, args, 0.0f, gain_state);
+		const float down_from = up.ok ? targets[i] : up.end_measured_turns_s;
+		apply_gains_for_target(motor, args, 0.0f, down_from, gain_state);
 		StepResult down;
 		spin_to(motor, args, t0, /*trial=*/2, static_cast<int>(i), "down",
-			up.ok ? targets[i] : up.end_measured_turns_s, 0.0f, samples, down,
+			down_from, 0.0f, samples, down,
 			iq_success_count, iq_total_count);
 		if (handle_step_result(down, steps, consecutive_failures)) {
 			aborted = true;
