@@ -514,6 +514,28 @@ test does not change motor behavior unless you save its output there
 ±0.05 turns/s) continuously for `--settle-hold-s` (default 0.2 s) — a single
 in-band sample doesn't count, to reject overshoot bouncing through the band.
 
+### If a step won't settle at a specific speed
+
+A single target failing to settle **does not** abort the whole sweep — it's
+logged, recorded in `steps.csv` with `ok=0`, and the sweep moves on to the
+next target. Only Ctrl-C, or `test_motor_inertia_calibration` failing to
+settle on 5 targets *in a row* (which looks systemic — e.g. a dropped CAN
+connection — rather than one bad speed), stops the run early.
+
+The timeout log line includes the ODrive's `active_errors`/`disarm_reason`
+and `axis_state` at that moment, plus the last measured velocity, so you
+don't have to dig through `samples.csv` just to tell an ODrive fault apart
+from the motor simply not settling. If a **narrow band** of speeds
+consistently fails while its neighbors settle fine (e.g. only 4.4–4.6
+turns/s out of a 1.0–6.0 sweep), that's almost always a real property of the
+hardware at that RPM — a mechanical resonance in the chain/sprocket, or the
+motor running low on current headroom against rising back-EMF — not a bug in
+this test. Check `iq_measured_a` in `samples.csv` for that band: if it's
+pinned near the current limit (60 A) while velocity still won't hold inside
+`--settle-tol`, that's exactly what's happening. Loosening `--settle-tol` or
+`--settle-hold-s` will make the symptom disappear without fixing the
+underlying limit — treat that as confirmation, not a real fix.
+
 ### Steps to run it
 
 ```bash

@@ -20,6 +20,7 @@
 #include <chrono>
 #include <cmath>
 #include <csignal>
+#include <cstdio>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
@@ -149,6 +150,10 @@ struct StepResult {
 	float from_turns_s = 0.0f;
 	float to_turns_s = 0.0f;
 	float settle_time_s = 0.0f; // time to first enter and hold the tolerance band
+	// Last velocity actually measured for this step — the real value even
+	// when ok is false, so a failed step's "true" endpoint is known instead
+	// of blindly assuming the nominal target was reached.
+	float end_measured_turns_s = 0.0f;
 	bool ok = false;
 };
 
@@ -178,8 +183,14 @@ bool spin_to(PreyMotor& motor, const Args& args,
 	std::vector<Sample>& samples, StepResult& step_out,
 	int& iq_success_count, int& iq_total_count)
 {
-	step_out = StepResult{trial, step_index, direction, from_turns_s,
-		target_turns_s, 0.0f, false};
+	// Explicit field assignment (not positional aggregate-init) — safer
+	// against StepResult growing new members out of declaration order.
+	step_out = StepResult{};
+	step_out.trial = trial;
+	step_out.step_index = step_index;
+	step_out.direction = direction;
+	step_out.from_turns_s = from_turns_s;
+	step_out.to_turns_s = target_turns_s;
 
 	const auto step_start = std::chrono::steady_clock::now();
 	const auto sample_period = std::chrono::duration<double>(1.0 / args.sample_hz);
@@ -244,17 +255,73 @@ bool spin_to(PreyMotor& motor, const Args& args,
 				sample_period));
 	}
 
+	step_out.end_measured_turns_s = last_vel;
+
 	if (g_stop.load()) {
 		return false;
 	}
 	if (timed_out || !settled_at) {
-		log_error("inertia_cal", "Timed out reaching " + std::to_string(target_turns_s)
-			+ " turns/s from " + std::to_string(from_turns_s));
+		// Why: a bare "timed out" tells you nothing about whether this is a
+		// resonance/back-EMF limit at this speed vs. an ODrive fault — dump
+		// what we can so a stuck band doesn't require re-running with a
+		// debugger attached.
+		std::string diag = "Timed out reaching " + std::to_string(target_turns_s)
+			+ " turns/s from " + std::to_string(from_turns_s) + " (last measured "
+			+ std::to_string(last_vel) + " turns/s)";
+		uint32_t active_errors = 0;
+		uint32_t disarm_reason = 0;
+		if (motor.try_get_active_errors(active_errors, disarm_reason)) {
+			char buf[80];
+			std::snprintf(buf, sizeof(buf),
+				" | active_errors=0x%08X disarm_reason=0x%08X",
+				active_errors, disarm_reason);
+			diag += buf;
+		}
+		uint32_t axis_error = 0;
+		uint32_t axis_state = 0;
+		if (motor.read_axis_state(axis_error, axis_state)) {
+			char buf[64];
+			std::snprintf(buf, sizeof(buf), " | axis_error=0x%08X axis_state=%u",
+				axis_error, axis_state);
+			diag += buf;
+		}
+		log_error("inertia_cal", diag);
 		return false;
 	}
 	step_out.settle_time_s = static_cast<float>(*settled_at);
 	step_out.ok = true;
 	return true;
+}
+
+// A step timing out at one speed (e.g. a mechanical resonance or back-EMF
+// current-headroom limit at that specific RPM) shouldn't throw away every
+// other data point in the sweep. Records the step either way and returns
+// true only when the caller should stop the whole run: Ctrl-C, or enough
+// consecutive failures in a row to look systemic (CAN drop, bad config)
+// rather than a single bad speed.
+constexpr int kMaxConsecutiveFailures = 5;
+
+bool handle_step_result(const StepResult& step, std::vector<StepResult>& steps,
+	int& consecutive_failures)
+{
+	steps.push_back(step);
+	if (g_stop.load()) {
+		return true;
+	}
+	if (step.ok) {
+		consecutive_failures = 0;
+		return false;
+	}
+	++consecutive_failures;
+	if (consecutive_failures >= kMaxConsecutiveFailures) {
+		log_error("inertia_cal", std::to_string(consecutive_failures)
+			+ " consecutive step failures — aborting (this looks systemic, not "
+			"a single bad speed; check CAN connection/heartbeat)");
+		return true;
+	}
+	log_error("inertia_cal", "Skipping this target and continuing the sweep ("
+		+ std::to_string(consecutive_failures) + " consecutive failure(s) so far)");
+	return false;
 }
 
 std::vector<float> build_targets(float rps_min, float rps_max, float rps_step) {
@@ -438,13 +505,13 @@ bool write_steps_csv(const std::string& path, const std::vector<StepResult>& ste
 		return false;
 	}
 	f << "trial,step_index,direction,from_turns_s,to_turns_s,delta_turns_s,"
-		"settle_time_s,ok\n";
+		"settle_time_s,end_measured_turns_s,ok\n";
 	f << std::fixed << std::setprecision(5);
 	for (const auto& s : steps) {
 		f << s.trial << ',' << s.step_index << ',' << s.direction << ','
 			<< s.from_turns_s << ',' << s.to_turns_s << ','
 			<< (s.to_turns_s - s.from_turns_s) << ',' << s.settle_time_s << ','
-			<< (s.ok ? 1 : 0) << '\n';
+			<< s.end_measured_turns_s << ',' << (s.ok ? 1 : 0) << '\n';
 	}
 	return true;
 }
@@ -542,24 +609,30 @@ int main(int argc, char** argv) {
 	const auto t0 = std::chrono::steady_clock::now();
 	bool aborted = false;
 
+	// A step that fails to settle (resonance/current-limit pocket at that
+	// speed, etc.) is recorded and skipped rather than aborting the whole
+	// sweep — see handle_step_result. consecutive_failures is shared across
+	// both trials so a systemic problem (not just one bad speed) still stops
+	// the run instead of burning through the rest at --max-step-wait-s each.
+	int consecutive_failures = 0;
+
 	// --- Trial A: cumulative ramp (spin from wherever it already is) ---
 	float cur = 0.0f;
 	for (size_t i = 0; i < targets.size() && !aborted; ++i) {
 		StepResult step;
-		if (!spin_to(motor, args, t0, /*trial=*/1, static_cast<int>(i), "up",
-				cur, targets[i], samples, step, iq_success_count, iq_total_count)) {
+		spin_to(motor, args, t0, /*trial=*/1, static_cast<int>(i), "up",
+			cur, targets[i], samples, step, iq_success_count, iq_total_count);
+		cur = step.ok ? targets[i] : step.end_measured_turns_s;
+		if (handle_step_result(step, steps, consecutive_failures)) {
 			aborted = true;
 			break;
 		}
-		steps.push_back(step);
-		cur = targets[i];
 	}
 	if (!aborted) {
 		StepResult step;
-		if (spin_to(motor, args, t0, /*trial=*/1, static_cast<int>(targets.size()),
-				"down", cur, 0.0f, samples, step, iq_success_count, iq_total_count)) {
-			steps.push_back(step);
-		} else {
+		spin_to(motor, args, t0, /*trial=*/1, static_cast<int>(targets.size()),
+			"down", cur, 0.0f, samples, step, iq_success_count, iq_total_count);
+		if (handle_step_result(step, steps, consecutive_failures)) {
 			aborted = true;
 		}
 	}
@@ -567,20 +640,25 @@ int main(int argc, char** argv) {
 	// --- Trial B: reset to zero before every step ---
 	for (size_t i = 0; i < targets.size() && !aborted; ++i) {
 		StepResult up;
-		if (!spin_to(motor, args, t0, /*trial=*/2, static_cast<int>(i), "up",
-				0.0f, targets[i], samples, up, iq_success_count, iq_total_count)) {
+		spin_to(motor, args, t0, /*trial=*/2, static_cast<int>(i), "up",
+			0.0f, targets[i], samples, up, iq_success_count, iq_total_count);
+		if (handle_step_result(up, steps, consecutive_failures)) {
 			aborted = true;
 			break;
 		}
-		steps.push_back(up);
 
+		// Why: spin_to always commands the motor back toward 0 next, so
+		// attempt the descent regardless of whether "up" actually settled —
+		// leaving the motor at speed because one step failed is worse than
+		// one extra (likely also failing) data point.
 		StepResult down;
-		if (!spin_to(motor, args, t0, /*trial=*/2, static_cast<int>(i), "down",
-				targets[i], 0.0f, samples, down, iq_success_count, iq_total_count)) {
+		spin_to(motor, args, t0, /*trial=*/2, static_cast<int>(i), "down",
+			up.ok ? targets[i] : up.end_measured_turns_s, 0.0f, samples, down,
+			iq_success_count, iq_total_count);
+		if (handle_step_result(down, steps, consecutive_failures)) {
 			aborted = true;
 			break;
 		}
-		steps.push_back(down);
 	}
 
 	motor.stop();
@@ -596,8 +674,20 @@ int main(int argc, char** argv) {
 	if (!steps_written) {
 		log_error("inertia_cal", "Failed to write " + out_dir + "/steps.csv");
 	}
+	const int failed_steps = static_cast<int>(std::count_if(steps.begin(), steps.end(),
+		[](const StepResult& s) { return !s.ok; }));
 	std::cout << "Wrote " << samples.size() << " samples, " << steps.size()
-		<< " step summaries to " << out_dir << "\n";
+		<< " step summaries (" << (steps.size() - failed_steps) << " ok, "
+		<< failed_steps << " failed/timed out) to " << out_dir << "\n";
+	if (failed_steps > 0) {
+		std::cout << failed_steps << " step(s) never settled — see the "
+			"log lines above and steps.csv (ok=0 rows) for which speeds. A "
+			"narrow band that consistently fails while its neighbors settle "
+			"fine usually means a real mechanical/electrical limit at that "
+			"RPM (resonance, or current saturating against back-EMF), not a "
+			"test bug — check iq_measured_a in samples.csv near the failed "
+			"target for saturation against the current limit.\n";
+	}
 
 	if (aborted) {
 		log_error("inertia_cal",
