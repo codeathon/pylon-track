@@ -268,7 +268,7 @@ distance stop. Constants live in `include/motor/lab_motion_limits.h`.
 | Limit | Value | Notes |
 |-------|-------|-------|
 | Min viable command | ~1.5 turns/s (~1.0 m/s chain) | Below this, closed-loop often shows ~0 motion |
-| Breakaway kick | targets &lt;3 turns/s from rest get +1 turns/s for 0.3 s, then fall back | `PreyMotor` — see `kKick*` in `lab_motion_limits.h`; not a MotionPlanner setting |
+| Breakaway kick | targets &lt;3 turns/s from rest get a flat 5 turns/s kick until measured velocity reaches 80% of target (2 s safety fallback), then fall back | `PreyMotor` — see `kKick*` in `lab_motion_limits.h`; not a MotionPlanner setting |
 | Spool-up | ~1.2 s | Time to approach a step velocity command |
 | Shortest reliable burst | **~80 mm** | Isolated move, either direction (~±5%) |
 | Comfortable / chase jab | **≥100–120 mm** | Tighter % error |

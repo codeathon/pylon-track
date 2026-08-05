@@ -264,7 +264,7 @@ struct StepResult {
 	// Peak velocity reached during the attempt — distinct from
 	// end_measured_turns_s, which is only the final value. A step can settle
 	// successfully (ok=true) while still having overshot target on the way
-	// there; this is how the kick-tuning phase tells "settled cleanly" apart
+	// there; this is how the kick smoke test tells "settled cleanly" apart
 	// from "settled after overshooting".
 	float max_vel_turns_s = 0.0f;
 	// True if this step needed the --grace-s extension to settle (or still
@@ -566,8 +566,7 @@ DynamicFit fit_dynamic_model(const std::vector<Sample>& samples, float torque_co
 		Row row;
 		row.alpha_rad = accel_turns_s2 * kTwoPi;
 		row.omega_rad = omega_turns_s * kTwoPi;
-		row.sign_omega = (row.omega_rad > 1e-3) ? 1.0
-			: (row.omega_rad < -1e-3 ? -1.0 : 0.0);
+		row.sign_omega = LabMotionLimits::sign_omega(row.omega_rad);
 		row.torque_nm = iq_sign * iq * torque_constant;
 		rows.push_back(row);
 	}

@@ -125,7 +125,10 @@ private:
 	// chain_static_friction_nm model. Returns 0 when uncalibrated, on the
 	// first command, or after a stale gap (motor was idle/stopped). Takes
 	// the literal target, never the kick-adjusted value — see apply_kick().
-	float compute_torque_ff_nm(float target_turns_s);
+	// now is passed in (not read internally) so send_velocity_command() can
+	// share one clock read with apply_kick() instead of each taking its own.
+	float compute_torque_ff_nm(float target_turns_s,
+		std::chrono::steady_clock::time_point now);
 	// Returns the velocity to actually command for this target — a flat
 	// LabMotionLimits::kKickFixedTurnsS (sign-matched) if this is a fresh
 	// breakaway from rest into a low target speed and measured velocity
@@ -134,7 +137,7 @@ private:
 	// across the kick's own artificial jump (e.g. 5 turns/s -> a 1.2 turns/s
 	// target in one tick) would read as a huge, fictitious deceleration and
 	// inject a large spurious braking torque_ff right as the kick ends.
-	float apply_kick(float target_turns_s);
+	float apply_kick(float target_turns_s, std::chrono::steady_clock::time_point now);
 	// Shared by set_velocity_turns_s() and apply()'s Velocity branch — the
 	// two paths a caller actually commands chain motion through — so kick
 	// and feed-forward behavior stay identical everywhere the motor is

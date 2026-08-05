@@ -7,6 +7,23 @@
 // Re-sweep with test_odrive_move --via-planner if the sprocket or load changes.
 namespace LabMotionLimits {
 
+// sign(omega) with a small dead zone around zero, used by the physical model
+// torque = J*alpha + B*omega + tau_c*sign(omega). Shared by PreyMotor's
+// torque_ff feed-forward (compute_torque_ff_nm) and
+// test_motor_inertia_calibration's dynamic-fit regression (fit_dynamic_model)
+// so both apply the exact same rule — the fitted tau_c only means what
+// production's feed-forward expects if the two agree bit-for-bit.
+constexpr double kSignOmegaEpsilon = 1e-3;
+inline double sign_omega(double omega_rad) {
+	if (omega_rad > kSignOmegaEpsilon) {
+		return 1.0;
+	}
+	if (omega_rad < -kSignOmegaEpsilon) {
+		return -1.0;
+	}
+	return 0.0;
+}
+
 // Below this Set_Input_Vel, the axis often sits in closed-loop with ~0 motion.
 constexpr float kMinViableTurnsPerS = 1.5f;
 

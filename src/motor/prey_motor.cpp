@@ -67,8 +67,9 @@ float PreyMotor::chain_mm_to_turns(float chain_mm) const {
 	return (chain_mm / mm_per_turn_) * static_cast<float>(cfg_.chain_direction_sign);
 }
 
-float PreyMotor::compute_torque_ff_nm(float target_turns_s) {
-	const auto now = std::chrono::steady_clock::now();
+float PreyMotor::compute_torque_ff_nm(float target_turns_s,
+	std::chrono::steady_clock::time_point now)
+{
 	const bool calibrated = cfg_.chain_inertia_kg_m2 > 0.0f;
 	float torque_ff = 0.0f;
 	if (calibrated && have_last_cmd_) {
@@ -81,15 +82,11 @@ float PreyMotor::compute_torque_ff_nm(float target_turns_s) {
 			const float accel_turns_s2 = (target_turns_s - last_cmd_turns_s_) / dt;
 			const float alpha_rad = accel_turns_s2 * kTwoPi;
 			const float omega_rad = target_turns_s * kTwoPi;
-			float sign_omega = 0.0f;
-			if (omega_rad > 1e-3f) {
-				sign_omega = 1.0f;
-			} else if (omega_rad < -1e-3f) {
-				sign_omega = -1.0f;
-			}
+			const float sign_omega_term = static_cast<float>(
+				LabMotionLimits::sign_omega(omega_rad));
 			torque_ff = cfg_.chain_inertia_kg_m2 * alpha_rad
 				+ cfg_.chain_viscous_friction_nm_s_per_rad * omega_rad
-				+ cfg_.chain_static_friction_nm * sign_omega;
+				+ cfg_.chain_static_friction_nm * sign_omega_term;
 		}
 	}
 	last_cmd_turns_s_ = target_turns_s;
@@ -98,8 +95,9 @@ float PreyMotor::compute_torque_ff_nm(float target_turns_s) {
 	return torque_ff;
 }
 
-float PreyMotor::apply_kick(float target_turns_s) {
-	const auto now = std::chrono::steady_clock::now();
+float PreyMotor::apply_kick(float target_turns_s,
+	std::chrono::steady_clock::time_point now)
+{
 	const bool is_new_pursuit = std::fabs(target_turns_s - pursuing_turns_s_)
 		> LabMotionLimits::kKickRetriggerDeltaTurnsS;
 	if (is_new_pursuit) {
@@ -146,11 +144,12 @@ float PreyMotor::apply_kick(float target_turns_s) {
 }
 
 bool PreyMotor::send_velocity_command(float target_turns_s) {
+	const auto now = std::chrono::steady_clock::now();
 	// torque_ff comes from the literal target, not the kick-adjusted value —
 	// see apply_kick()'s comment on why differentiating across the kick's
 	// own jump would inject a spurious braking torque.
-	const float torque_ff = compute_torque_ff_nm(target_turns_s);
-	const float effective_turns_s = apply_kick(target_turns_s);
+	const float torque_ff = compute_torque_ff_nm(target_turns_s, now);
+	const float effective_turns_s = apply_kick(target_turns_s, now);
 	return can_.set_input_velocity(effective_turns_s, torque_ff);
 }
 

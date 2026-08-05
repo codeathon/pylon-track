@@ -656,9 +656,9 @@ still written to CSV but no regression is run on an aborted sweep.
   target_turns_s, measured_turns_s, iq_measured_a, iq_valid`.
 - `steps.csv` — one row per up/down transition: `trial, step_index,
   direction, from_turns_s, to_turns_s, delta_turns_s, settle_time_s,
-  end_measured_turns_s, max_vel_turns_s, used_grace, ok`. Kick-tuning
-  attempts (trial `0`) aren't included — they're a separate pre-sweep pass,
-  not part of the calibration.
+  end_measured_turns_s, max_vel_turns_s, used_grace, ok`. The kick smoke test
+  (trial `0`) isn't included — it's a separate pre-sweep pass, not part of
+  the calibration.
 - Printed summary: the timing cross-check fit, then the dynamic fit's R² and
   the three calibrated values, formatted ready to paste into
   `config/arena_experiment.json`'s `motor` section.
