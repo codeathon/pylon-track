@@ -28,6 +28,11 @@ constexpr uint16_t CMD_SET_AXIS_STATE = 0x007;
 constexpr uint16_t CMD_SET_CONTROLLER_MODE = 0x00b;
 constexpr uint16_t CMD_SET_INPUT_VEL = 0x00d;
 constexpr uint16_t CMD_SET_LIMITS = 0x00f;
+// Set_Vel_Gains: vel_gain (float, bytes 0-3), vel_integrator_gain (float,
+// bytes 4-7) — same layout pattern as Set_Limits. Verify against odrivetool/
+// your firmware's protocol before trusting this on real hardware; this ID
+// hasn't been exercised elsewhere in this codebase before now.
+constexpr uint16_t CMD_SET_VEL_GAINS = 0x01b;
 constexpr uint16_t CMD_GET_IQ = 0x014;
 constexpr uint16_t CMD_CLEAR_ERRORS = 0x018;
 
@@ -319,6 +324,14 @@ bool ODriveCan::set_limits(float velocity_limit_turns_s, float current_limit_a) 
 	pack_float_le(velocity_limit_turns_s, buf);
 	pack_float_le(current_limit_a, buf + 4);
 	return send_frame(CMD_SET_LIMITS, buf, sizeof(buf));
+}
+
+bool ODriveCan::set_vel_gains(float vel_gain, float vel_integrator_gain) {
+	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
+	uint8_t buf[8] = {};
+	pack_float_le(vel_gain, buf);
+	pack_float_le(vel_integrator_gain, buf + 4);
+	return send_frame(CMD_SET_VEL_GAINS, buf, sizeof(buf));
 }
 
 bool ODriveCan::send_estop() {

@@ -355,3 +355,10 @@ bool PreyMotor::try_get_active_errors(uint32_t& active_errors, uint32_t& disarm_
 	}
 	return can_.get_active_errors(active_errors, disarm_reason, timeout_ms);
 }
+
+bool PreyMotor::set_vel_gains(float vel_gain, float vel_integrator_gain) {
+	if (!status_.connected) {
+		return false;
+	}
+	return can_.set_vel_gains(vel_gain, vel_integrator_gain);
+}

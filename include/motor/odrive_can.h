@@ -29,6 +29,9 @@ public:
 		int timeout_ms = -1) const;
 	bool set_input_velocity(float turns_s, float torque_ff = 0.0f);
 	bool set_limits(float velocity_limit_turns_s, float current_limit_a);
+	// Set_Vel_Gains (0x01b) — runtime override, not persisted to the ODrive's
+	// flash config (odrivetool's save_configuration() does that separately).
+	bool set_vel_gains(float vel_gain, float vel_integrator_gain);
 	bool send_estop();
 	bool clear_errors();
 	bool check_heartbeat() const;

@@ -99,6 +99,21 @@ struct Args {
 	bool smoke_test_kick = true;
 	float kick_speed = LabMotionLimits::kKickFixedTurnsS;
 	float kick_cutoff_frac = LabMotionLimits::kKickCutoffFraction;
+	// Optional velocity-loop gain scheduling: switches ODrive vel_gain/
+	// vel_integrator_gain by CAN (Set_Vel_Gains, runtime-only — does not
+	// touch odrivetool's saved config) depending on which side of
+	// --gain-switch-turns-s the upcoming target falls on. Off by default —
+	// leaves whatever's already configured on the ODrive alone. This
+	// switches gains right before each step, not necessarily at true
+	// mechanical rest (Trial A is a cumulative ramp, not stop-start) — fine
+	// for a monitored bench calibration, not something to reuse for live
+	// mid-motion switching in production control.
+	bool schedule_gains = false;
+	float gain_switch_turns_s = 3.0f;
+	float vel_gain_low = 0.0f;
+	float vel_integrator_gain_low = 0.0f;
+	float vel_gain_high = 0.0f;
+	float vel_integrator_gain_high = 0.0f;
 	bool write_config = false;
 	bool verbose = false;
 };
@@ -110,7 +125,9 @@ void print_usage() {
 		"    [--settle-tol-pct 2.5] [--settle-hold-s 0.2] [--sample-hz 100]\n"
 		"    [--torque-constant 0.0827] [--max-step-wait-s 10] [--near-tol 0.1]\n"
 		"    [--grace-s 1.0] [--iq-sign -1] [--kick-speed 5.0]\n"
-		"    [--kick-cutoff-frac 0.8] [--no-kick-smoke-test]\n"
+		"    [--kick-cutoff-frac 0.8] [--no-kick-smoke-test] [--schedule-gains]\n"
+		"    [--gain-switch-turns-s 3.0] [--vel-gain-low V] [--vel-integrator-gain-low V]\n"
+		"    [--vel-gain-high V] [--vel-integrator-gain-high V]\n"
 		"    [--output <dir>] [--write-config] [--verbose]\n"
 		"\n"
 		"  Two-trial step-response sweep of the prey chain motor from --rps-min\n"
@@ -137,6 +154,16 @@ void print_usage() {
 		"  target, only for targets under kKickMaxTargetTurnsS) and reports\n"
 		"  whether it actually settled, before the real sweep spends minutes on\n"
 		"  a kick that doesn't work. Pass --no-kick-smoke-test to skip.\n"
+		"\n"
+		"  --schedule-gains: before each step, sends Set_Vel_Gains (CAN, runtime-\n"
+		"  only — does not touch odrivetool's saved config) with --vel-gain-low/\n"
+		"  --vel-integrator-gain-low if the upcoming target's magnitude is under\n"
+		"  --gain-switch-turns-s, otherwise the *-high pair. Off by default —\n"
+		"  leaves whatever's already configured alone. All four gain values are\n"
+		"  required when this is on; there is no default, since a wrong guess\n"
+		"  here drives the motor. Switches happen right before a step, not\n"
+		"  necessarily at full mechanical rest (Trial A is a cumulative ramp) —\n"
+		"  fine for a monitored bench run, not a pattern for live production use.\n"
 		"\n"
 		"  The chain MUST be a closed loop (no physical end) — this test spins\n"
 		"  continuously for several minutes and does not track position.\n"
@@ -180,6 +207,18 @@ bool parse_args(int argc, char** argv, Args& args) {
 				args.kick_cutoff_frac = std::stof(argv[++i]);
 			} else if (std::strcmp(argv[i], "--no-kick-smoke-test") == 0) {
 				args.smoke_test_kick = false;
+			} else if (std::strcmp(argv[i], "--schedule-gains") == 0) {
+				args.schedule_gains = true;
+			} else if (std::strcmp(argv[i], "--gain-switch-turns-s") == 0 && i + 1 < argc) {
+				args.gain_switch_turns_s = std::stof(argv[++i]);
+			} else if (std::strcmp(argv[i], "--vel-gain-low") == 0 && i + 1 < argc) {
+				args.vel_gain_low = std::stof(argv[++i]);
+			} else if (std::strcmp(argv[i], "--vel-integrator-gain-low") == 0 && i + 1 < argc) {
+				args.vel_integrator_gain_low = std::stof(argv[++i]);
+			} else if (std::strcmp(argv[i], "--vel-gain-high") == 0 && i + 1 < argc) {
+				args.vel_gain_high = std::stof(argv[++i]);
+			} else if (std::strcmp(argv[i], "--vel-integrator-gain-high") == 0 && i + 1 < argc) {
+				args.vel_integrator_gain_high = std::stof(argv[++i]);
 			} else if (std::strcmp(argv[i], "--write-config") == 0) {
 				args.write_config = true;
 			} else if (std::strcmp(argv[i], "--verbose") == 0) {
@@ -647,6 +686,42 @@ bool write_steps_csv(const std::string& path, const std::vector<StepResult>& ste
 	return true;
 }
 
+// Tracks which gain pair is currently applied so apply_gains_for_target()
+// only sends Set_Vel_Gains when the regime actually changes, not before
+// every single step.
+struct GainScheduleState {
+	bool have_current = false;
+	float vel_gain = 0.0f;
+	float vel_integrator_gain = 0.0f;
+};
+
+void apply_gains_for_target(PreyMotor& motor, const Args& args, float target_turns_s,
+	GainScheduleState& state)
+{
+	if (!args.schedule_gains) {
+		return;
+	}
+	const bool low = std::fabs(target_turns_s) < args.gain_switch_turns_s;
+	const float want_vel_gain = low ? args.vel_gain_low : args.vel_gain_high;
+	const float want_vel_integrator_gain = low ? args.vel_integrator_gain_low
+		: args.vel_integrator_gain_high;
+	if (state.have_current && std::fabs(want_vel_gain - state.vel_gain) < 1e-6f
+			&& std::fabs(want_vel_integrator_gain - state.vel_integrator_gain) < 1e-6f) {
+		return;
+	}
+	if (motor.set_vel_gains(want_vel_gain, want_vel_integrator_gain)) {
+		std::cout << "  gains -> vel_gain=" << want_vel_gain
+			<< " vel_integrator_gain=" << want_vel_integrator_gain
+			<< " (target " << target_turns_s << " turns/s, "
+			<< (low ? "low" : "high") << " regime)\n";
+		state.vel_gain = want_vel_gain;
+		state.vel_integrator_gain = want_vel_integrator_gain;
+		state.have_current = true;
+	} else {
+		log_error("inertia_cal", "Set_Vel_Gains failed");
+	}
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -697,6 +772,19 @@ int main(int argc, char** argv) {
 		std::cerr << "--kick-cutoff-frac must be in (0, 1]\n";
 		return 1;
 	}
+	if (args.schedule_gains) {
+		if (args.gain_switch_turns_s <= 0.0f) {
+			std::cerr << "--gain-switch-turns-s must be > 0\n";
+			return 1;
+		}
+		if (args.vel_gain_low <= 0.0f || args.vel_integrator_gain_low <= 0.0f
+				|| args.vel_gain_high <= 0.0f || args.vel_integrator_gain_high <= 0.0f) {
+			std::cerr << "--schedule-gains requires all four of --vel-gain-low/"
+				"--vel-integrator-gain-low/--vel-gain-high/--vel-integrator-gain-high "
+				"(> 0) — no default, a wrong guess here drives the motor\n";
+			return 1;
+		}
+	}
 
 	Logger::instance().set_level(args.verbose ? LogLevel::Debug : LogLevel::Info);
 
@@ -740,6 +828,9 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
+	// See apply_gains_for_target() — no-op unless --schedule-gains is set.
+	GainScheduleState gain_state;
+
 	// Breakaway-kick smoke test: PreyMotor's kick is a fixed --kick-speed
 	// with a feedback-driven cutoff (see LabMotionLimits::kKick*), not a
 	// magnitude to search for — but Trial A/B command through the same kick
@@ -751,6 +842,7 @@ int main(int argc, char** argv) {
 		std::cout << "Kick smoke test: breakaway from rest to " << args.rps_min
 			<< " turns/s (kick-speed " << args.kick_speed << ", cutoff "
 			<< (args.kick_cutoff_frac * 100.0f) << "% of target)...\n";
+		apply_gains_for_target(motor, args, args.rps_min, gain_state);
 		const auto smoke_t0 = std::chrono::steady_clock::now();
 		std::vector<Sample> smoke_samples; // discarded — not part of the calibration
 		StepResult smoke_step;
@@ -800,6 +892,7 @@ int main(int argc, char** argv) {
 	// --- Trial A: cumulative ramp (spin from wherever it already is) ---
 	float cur = 0.0f;
 	for (size_t i = 0; i < targets.size() && !aborted; ++i) {
+		apply_gains_for_target(motor, args, targets[i], gain_state);
 		StepResult step;
 		spin_to(motor, args, t0, /*trial=*/1, static_cast<int>(i), "up",
 			cur, targets[i], samples, step, iq_success_count, iq_total_count);
@@ -810,6 +903,7 @@ int main(int argc, char** argv) {
 		}
 	}
 	if (!aborted) {
+		apply_gains_for_target(motor, args, 0.0f, gain_state);
 		StepResult step;
 		spin_to(motor, args, t0, /*trial=*/1, static_cast<int>(targets.size()),
 			"down", cur, 0.0f, samples, step, iq_success_count, iq_total_count);
@@ -820,6 +914,7 @@ int main(int argc, char** argv) {
 
 	// --- Trial B: reset to zero before every step ---
 	for (size_t i = 0; i < targets.size() && !aborted; ++i) {
+		apply_gains_for_target(motor, args, targets[i], gain_state);
 		StepResult up;
 		spin_to(motor, args, t0, /*trial=*/2, static_cast<int>(i), "up",
 			0.0f, targets[i], samples, up, iq_success_count, iq_total_count);
@@ -832,6 +927,7 @@ int main(int argc, char** argv) {
 		// attempt the descent regardless of whether "up" actually settled —
 		// leaving the motor at speed because one step failed is worse than
 		// one extra (likely also failing) data point.
+		apply_gains_for_target(motor, args, 0.0f, gain_state);
 		StepResult down;
 		spin_to(motor, args, t0, /*trial=*/2, static_cast<int>(i), "down",
 			up.ok ? targets[i] : up.end_measured_turns_s, 0.0f, samples, down,

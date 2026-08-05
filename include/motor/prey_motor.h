@@ -60,6 +60,11 @@ public:
 	bool try_get_iq(float& iq_setpoint, float& iq_measured, int timeout_ms = 0) const;
 	bool try_get_active_errors(uint32_t& active_errors, uint32_t& disarm_reason,
 		int timeout_ms = 0) const;
+	// Runtime-only ODrive velocity-loop gain override (not persisted to
+	// flash — odrivetool's save_configuration() is separate). Intended for
+	// calibration tooling to switch gain sets between steps while the motor
+	// is at rest, not for live mid-motion switching in production control.
+	bool set_vel_gains(float vel_gain, float vel_integrator_gain);
 
 	// Overrides the flat breakaway-kick speed (LabMotionLimits::
 	// kKickFixedTurnsS by default) — lets a caller (e.g.

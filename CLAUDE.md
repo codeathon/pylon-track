@@ -76,9 +76,31 @@ this file is just what a fresh session needs to not re-derive from scratch.
   current before it could visibly oscillate. Original gains (~0.167 /
   ~0.333, a 2:1 integrator:proportional ratio) produced a sustained
   limit-cycle around the target speed that didn't damp out no matter how
-  long you waited; lowering `vel_integrator_gain` to ~0.05-0.06 fixed it.
+  long you waited; lowering `vel_integrator_gain` helped but traded off
+  against low-speed tracking — too low and the real chain's load produces a
+  persistent (not oscillating) steady-state undershoot, since a weaker
+  integrator can't build enough torque fast enough to close a bigger load's
+  error. A single fixed gain pair may not serve the whole practical speed
+  range on this rig; `ODriveCan::set_vel_gains()` /
+  `PreyMotor::set_vel_gains()` (`Set_Vel_Gains`, CAN cmd `0x01b`, runtime-
+  only — not persisted, `odrivetool`'s `save_configuration()` is separate)
+  exist for exactly this, and
+  `tests/motor_inertia_calibration_test.cpp --schedule-gains` switches
+  between a low/high pair by target speed *between calibration steps* — not
+  wired into any live production control path, since switching gains
+  mid-motion needs bumpless-transfer handling this repo doesn't have yet.
   If chain motor speed steps oscillate again after any future current-limit
   or gain change, this is the same class of issue, not a code bug.
+- `PreyMotor`'s breakaway kick (`kKick*` in `lab_motion_limits.h`) commands a
+  flat, fixed speed when starting a low-speed move from rest, then swaps to
+  the literal target once *measured* velocity (not a timer) reaches a
+  fraction of target — feedback-driven because how long breakaway actually
+  takes depends on real load, not a guess. `compute_torque_ff_nm()`
+  deliberately takes the literal target, never the kick-adjusted value — an
+  earlier version fed the boosted value in, so every kick-end handoff looked
+  like a huge fictitious deceleration and injected a large spurious braking
+  torque right as the kick relaxed. If you touch either of these two
+  functions, keep that decoupling — recombining them reintroduces that bug.
 - `ShuttleMotor` (LabJack, `include/motor/shuttle_motor.h`) replaced an older
   `TrapDoorMotor`/`LabJackDAC` design (deleted). It drives two LabJack
   **analog** FIO pins (FIO4/FIO5 — not fixed digital, so "high" is a real
