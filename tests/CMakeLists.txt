@@ -119,3 +119,24 @@ target_link_libraries(test_hunt_sim PRIVATE
 	nlohmann_json::nlohmann_json
 	pthread
 )
+
+# Chain inertia/friction calibration sweep — talks to PreyMotor/ODriveCan
+# directly (no MotionPlanner), same motor-only linkage style as
+# test_distance_moving/test_hunt_sim (no camera/Pylon/LabJack).
+add_executable(test_motor_inertia_calibration
+	motor_inertia_calibration_test.cpp
+	${CMAKE_SOURCE_DIR}/src/motor/odrive_can.cpp
+	${CMAKE_SOURCE_DIR}/src/motor/prey_motor.cpp
+	${CMAKE_SOURCE_DIR}/src/experiment/arena_config.cpp
+	${CMAKE_SOURCE_DIR}/src/calibrate/setup_util.cpp
+	${CMAKE_SOURCE_DIR}/src/log/logger.cpp
+)
+target_include_directories(test_motor_inertia_calibration PRIVATE
+	${CMAKE_SOURCE_DIR}/include
+	${OpenCV_INCLUDE_DIRS}
+)
+target_link_libraries(test_motor_inertia_calibration PRIVATE
+	${OpenCV_LIBS}
+	nlohmann_json::nlohmann_json
+	pthread
+)

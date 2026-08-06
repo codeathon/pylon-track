@@ -34,6 +34,13 @@ struct MotorConfig {
 	float pulley_radius_m = 0.025f;
 	int chain_direction_sign = 1;
 	float chain_mm_per_motor_turn = 0.0f;
+
+	// Chain inertia/friction model (test_motor_inertia_calibration output) —
+	// see PreyMotorConfig. chain_inertia_kg_m2 <= 0 means "uncalibrated".
+	float chain_inertia_kg_m2 = 0.0f;
+	float chain_viscous_friction_nm_s_per_rad = 0.0f;
+	float chain_static_friction_nm = 0.0f;
+	float torque_constant_nm_per_a = 0.0827f;
 };
 
 // Animal contour priors — used by ObjectAssociator in a later step.

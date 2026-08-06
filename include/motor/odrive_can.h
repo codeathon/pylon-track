@@ -1,8 +1,10 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 
 // Low-level ODrive S1 CANSimple client over Linux SocketCAN.
 // Wraps all CAN frame encode/decode so PreyMotor stays chain-centric.
@@ -27,6 +29,9 @@ public:
 		int timeout_ms = -1) const;
 	bool set_input_velocity(float turns_s, float torque_ff = 0.0f);
 	bool set_limits(float velocity_limit_turns_s, float current_limit_a);
+	// Set_Vel_Gains (0x01b) — runtime override, not persisted to the ODrive's
+	// flash config (odrivetool's save_configuration() does that separately).
+	bool set_vel_gains(float vel_gain, float vel_integrator_gain);
 	bool send_estop();
 	bool clear_errors();
 	bool check_heartbeat() const;
@@ -61,9 +66,18 @@ private:
 	// touches socket_fd_ takes this lock. Recursive because enter_velocity_mode()
 	// calls other public (self-locking) methods.
 	mutable std::recursive_mutex io_mutex_;
+	// Demux cache for recv_frame(): the socket has one shared RX queue but
+	// several independent pollers (get_encoder_estimates, get_iq,
+	// get_active_errors, heartbeat) each want a different cmd_id. Without
+	// this, whichever poller drains the socket first silently discards
+	// frames the others were waiting for — see recv_frame().
+	mutable std::unordered_map<uint16_t, std::array<uint8_t, 8>> rx_cache_;
 
 	bool send_frame(uint16_t cmd_id, const void* data, uint8_t len) const;
 	bool send_raw_frame(uint32_t can_id_11, const void* data, uint8_t len) const;
+	// On-demand request for a Get_* message that may not be cyclically
+	// broadcast (Get_Iq, Get_Error) — see get_iq()/get_active_errors().
+	bool send_rtr_frame(uint16_t cmd_id) const;
 	bool recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len_out,
 		int timeout_ms = -1) const;
 	bool wait_for_axis_state(uint32_t wanted, int timeout_ms) const;

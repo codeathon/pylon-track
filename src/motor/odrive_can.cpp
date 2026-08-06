@@ -28,6 +28,11 @@ constexpr uint16_t CMD_SET_AXIS_STATE = 0x007;
 constexpr uint16_t CMD_SET_CONTROLLER_MODE = 0x00b;
 constexpr uint16_t CMD_SET_INPUT_VEL = 0x00d;
 constexpr uint16_t CMD_SET_LIMITS = 0x00f;
+// Set_Vel_Gains: vel_gain (float, bytes 0-3), vel_integrator_gain (float,
+// bytes 4-7) — same layout pattern as Set_Limits. Verify against odrivetool/
+// your firmware's protocol before trusting this on real hardware; this ID
+// hasn't been exercised elsewhere in this codebase before now.
+constexpr uint16_t CMD_SET_VEL_GAINS = 0x01b;
 constexpr uint16_t CMD_GET_IQ = 0x014;
 constexpr uint16_t CMD_CLEAR_ERRORS = 0x018;
 
@@ -65,7 +70,7 @@ std::string hex_u32(uint32_t value) {
 }
 // Safe defaults so a GUI left at vel_limit=0 cannot silently clamp Set_Input_Vel.
 constexpr float kDefaultVelLimitTurnsS = 10.0f;
-constexpr float kDefaultCurrentLimitA = 40.0f;
+constexpr float kDefaultCurrentLimitA = 60.0f;
 
 void pack_float_le(float value, uint8_t* out) {
 	std::memcpy(out, &value, sizeof(float));
@@ -152,6 +157,21 @@ bool ODriveCan::send_raw_frame(uint32_t can_id_11, const void* data, uint8_t len
 	return n == static_cast<ssize_t>(sizeof(frame));
 }
 
+// Why: Get_Iq/Get_Error are only cyclic if separately enabled on the ODrive
+// (unlike Heartbeat, which is always on) — recv_frame alone can wait forever
+// if that was never configured. CANSimple answers an RTR frame with that
+// Get_* message once, on demand, regardless of the cyclic setting.
+bool ODriveCan::send_rtr_frame(uint16_t cmd_id) const {
+	if (socket_fd_ < 0) {
+		return false;
+	}
+	can_frame frame{};
+	frame.can_id = (can_id(cmd_id, cfg_.node_id) & CAN_SFF_MASK) | CAN_RTR_FLAG;
+	frame.can_dlc = 8; // expected reply length; RTR frames carry no payload
+	const ssize_t n = write(socket_fd_, &frame, sizeof(frame));
+	return n == static_cast<ssize_t>(sizeof(frame));
+}
+
 bool ODriveCan::send_frame(uint16_t cmd_id, const void* data, uint8_t len) const {
 	return send_raw_frame(can_id(cmd_id, cfg_.node_id), data, len);
 }
@@ -209,10 +229,32 @@ bool ODriveCan::recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len
 	const auto deadline = std::chrono::steady_clock::now()
 		+ std::chrono::milliseconds(wait_ms);
 
-	// Bus is busy with cyclic encoder/heartbeat — skip non-matching frames until timeout.
-	// timeout_ms == 0: drain already-queued frames only (no wait) so telemetry cannot
-	// stall the Set_Input_Vel cadence used by MotionPlanner.
+	// Several independent callers (get_encoder_estimates every tick, get_iq,
+	// get_active_errors, heartbeat reads) share this one socket, each wanting
+	// a different cmd_id. A raw CAN socket's kernel RX queue is strict FIFO —
+	// read() unconditionally dequeues whatever's next, matching or not. The
+	// old version just discarded non-matching frames, which meant a fast
+	// poller (e.g. get_encoder_estimates' own drain-to-newest loop, called
+	// every sample in the calibration test's hot loop) would silently vacuum
+	// up and throw away Get_Iq/Get_Error replies before get_iq()/
+	// get_active_errors() ever got a chance to see them — those calls would
+	// then *always* time out (RTR sent, but the reply was already consumed
+	// and dropped by the encoder-estimates read moments earlier), regardless
+	// of any RTR/drain fix on the get_iq()/get_active_errors() side alone.
+	// Fix: every frame we dequeue gets demuxed into rx_cache_ by its own
+	// cmd_id (overwriting, so it's already drain-to-newest per cmd_id) so a
+	// different recv_frame() call for that cmd_id can still find it.
 	while (true) {
+		auto cached = rx_cache_.find(expected_cmd_id);
+		if (cached != rx_cache_.end()) {
+			if (data_out && len_out > 0) {
+				std::memcpy(data_out, cached->second.data(),
+					std::min<size_t>(len_out, cached->second.size()));
+			}
+			rx_cache_.erase(cached);
+			return true;
+		}
+
 		int poll_ms = 0;
 		if (wait_ms != 0) {
 			const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -234,14 +276,12 @@ bool ODriveCan::recv_frame(uint16_t expected_cmd_id, void* data_out, uint8_t len
 		const uint32_t id = frame.can_id & CAN_SFF_MASK;
 		const uint16_t cmd_id = static_cast<uint16_t>(id & 0x1F);
 		const uint8_t node_id = static_cast<uint8_t>((id >> 5) & 0x3F);
-		if (cmd_id != expected_cmd_id || node_id != cfg_.node_id) {
+		if (node_id != cfg_.node_id) {
 			continue;
 		}
-		if (data_out && len_out > 0) {
-			const uint8_t copy_len = std::min(len_out, frame.can_dlc);
-			std::memcpy(data_out, frame.data, copy_len);
-		}
-		return true;
+		std::array<uint8_t, 8> payload{};
+		std::memcpy(payload.data(), frame.data, std::min<uint8_t>(frame.can_dlc, 8));
+		rx_cache_[cmd_id] = payload;
 	}
 }
 
@@ -286,6 +326,14 @@ bool ODriveCan::set_limits(float velocity_limit_turns_s, float current_limit_a) 
 	return send_frame(CMD_SET_LIMITS, buf, sizeof(buf));
 }
 
+bool ODriveCan::set_vel_gains(float vel_gain, float vel_integrator_gain) {
+	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
+	uint8_t buf[8] = {};
+	pack_float_le(vel_gain, buf);
+	pack_float_le(vel_integrator_gain, buf + 4);
+	return send_frame(CMD_SET_VEL_GAINS, buf, sizeof(buf));
+}
+
 bool ODriveCan::send_estop() {
 	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
 	return send_frame(CMD_ESTOP, nullptr, 0);
@@ -315,9 +363,22 @@ bool ODriveCan::set_axis_state(uint32_t requested_state) {
 
 bool ODriveCan::get_iq(float& iq_setpoint, float& iq_measured, int timeout_ms) const {
 	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
+	// Fire-and-check: with timeout_ms=0 (non-blocking peek, the hot-loop case)
+	// this request's own reply won't have arrived yet by the time we poll —
+	// it'll show up as *this* frame queued for the *next* call instead, a few
+	// ms later. Harmless either way when called every loop iteration.
+	send_rtr_frame(CMD_GET_IQ);
 	uint8_t buf[8] = {};
 	if (!recv_frame(CMD_GET_IQ, buf, sizeof(buf), timeout_ms)) {
 		return false;
+	}
+	// Drain to the *newest* queued frame — same fix get_encoder_estimates
+	// already needed. Cyclic broadcast + this call's own RTR request can
+	// queue frames faster than a --sample-hz caller drains them, and a
+	// single recv_frame() returns the oldest one first (FIFO): without this,
+	// a growing backlog means every read stays pinned to old (often
+	// near-zero, from early in the run) current values indefinitely.
+	while (recv_frame(CMD_GET_IQ, buf, sizeof(buf), /*timeout_ms=*/0)) {
 	}
 	unpack_float_le(buf, iq_setpoint);
 	unpack_float_le(buf + 4, iq_measured);
@@ -328,9 +389,12 @@ bool ODriveCan::get_active_errors(uint32_t& active_errors, uint32_t& disarm_reas
 	int timeout_ms) const
 {
 	std::lock_guard<std::recursive_mutex> lock(io_mutex_);
+	send_rtr_frame(CMD_GET_ERROR);
 	uint8_t buf[8] = {};
 	if (!recv_frame(CMD_GET_ERROR, buf, sizeof(buf), timeout_ms)) {
 		return false;
+	}
+	while (recv_frame(CMD_GET_ERROR, buf, sizeof(buf), /*timeout_ms=*/0)) {
 	}
 	std::memcpy(&active_errors, buf, sizeof(uint32_t));
 	std::memcpy(&disarm_reason, buf + 4, sizeof(uint32_t));
@@ -440,6 +504,7 @@ void ODriveCan::flush_rx() const {
 		return;
 	}
 	// Drop buffered cyclic frames so the next heartbeat reflects post-command state.
+	rx_cache_.clear();
 	pollfd pfd{};
 	pfd.fd = socket_fd_;
 	pfd.events = POLLIN;

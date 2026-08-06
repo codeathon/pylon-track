@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include "log/logger.h"
+#include "motor/lab_motion_limits.h"
 
 namespace {
 
@@ -26,6 +27,9 @@ bool PreyMotor::connect() {
 		return false;
 	}
 	status_.connected = true;
+	have_last_cmd_ = false;
+	kicking_ = false;
+	pursuing_turns_s_ = 0.0f;
 	// Autobaud drives stay silent until they see host traffic — beacon first.
 	status_.heartbeat_ok = can_.wake_autobaud(3000);
 	refresh_status();
@@ -61,6 +65,92 @@ float PreyMotor::chain_mm_to_turns(float chain_mm) const {
 		return 0.0f;
 	}
 	return (chain_mm / mm_per_turn_) * static_cast<float>(cfg_.chain_direction_sign);
+}
+
+float PreyMotor::compute_torque_ff_nm(float target_turns_s,
+	std::chrono::steady_clock::time_point now)
+{
+	const bool calibrated = cfg_.chain_inertia_kg_m2 > 0.0f;
+	float torque_ff = 0.0f;
+	if (calibrated && have_last_cmd_) {
+		const float dt = std::chrono::duration<float>(now - last_cmd_time_).count();
+		// Why: a gap this long means the motor was idle/stopped between
+		// commands — a dt-based accel estimate across it would be fictitious,
+		// so skip feed-forward for this one command instead of spiking torque_ff.
+		constexpr float kMaxValidDtS = 0.15f;
+		if (dt > 1e-4f && dt <= kMaxValidDtS) {
+			const float accel_turns_s2 = (target_turns_s - last_cmd_turns_s_) / dt;
+			const float alpha_rad = accel_turns_s2 * kTwoPi;
+			const float omega_rad = target_turns_s * kTwoPi;
+			const float sign_omega_term = static_cast<float>(
+				LabMotionLimits::sign_omega(omega_rad));
+			torque_ff = cfg_.chain_inertia_kg_m2 * alpha_rad
+				+ cfg_.chain_viscous_friction_nm_s_per_rad * omega_rad
+				+ cfg_.chain_static_friction_nm * sign_omega_term;
+		}
+	}
+	last_cmd_turns_s_ = target_turns_s;
+	last_cmd_time_ = now;
+	have_last_cmd_ = true;
+	return torque_ff;
+}
+
+float PreyMotor::apply_kick(float target_turns_s,
+	std::chrono::steady_clock::time_point now)
+{
+	const bool is_new_pursuit = std::fabs(target_turns_s - pursuing_turns_s_)
+		> LabMotionLimits::kKickRetriggerDeltaTurnsS;
+	if (is_new_pursuit) {
+		// Why: only a genuine breakaway from near-rest should kick — not
+		// every intermediate step of an already-moving low-speed trajectory
+		// (that would jerk at each step instead of ramping smoothly).
+		const bool from_rest = std::fabs(pursuing_turns_s_)
+			< LabMotionLimits::kKickFromRestTurnsS;
+		const bool ramping_up = std::fabs(target_turns_s) > std::fabs(pursuing_turns_s_);
+		kicking_ = from_rest && ramping_up
+			&& std::fabs(target_turns_s) > 1e-3f
+			&& std::fabs(target_turns_s) < LabMotionLimits::kKickMaxTargetTurnsS;
+		if (kicking_) {
+			kick_start_time_ = now;
+			log_info("motor", "Breakaway kick toward " + std::to_string(target_turns_s)
+				+ " turns/s");
+		}
+		pursuing_turns_s_ = target_turns_s;
+	}
+
+	if (!kicking_) {
+		return target_turns_s;
+	}
+
+	// Cutoff is feedback-driven, not a fixed timer: how long breakaway
+	// actually takes depends on real load, not a guess. Reads whatever's
+	// currently cached — one iteration stale at worst in the normal
+	// set_velocity_turns_s-then-try_sample_velocity_turns_s loop pattern,
+	// which is close enough for this decision.
+	float measured = 0.0f;
+	{
+		std::lock_guard<std::mutex> lock(status_mutex_);
+		measured = status_.velocity_turns_s;
+	}
+	const bool reached_cutoff = std::fabs(measured)
+		>= std::fabs(target_turns_s) * kick_cutoff_fraction_;
+	const float elapsed = std::chrono::duration<float>(now - kick_start_time_).count();
+	if (reached_cutoff || elapsed >= LabMotionLimits::kKickMaxDurationS) {
+		kicking_ = false;
+		return target_turns_s;
+	}
+	const float sign = (target_turns_s >= 0.0f) ? 1.0f : -1.0f;
+	return sign * kick_speed_turns_s_;
+}
+
+bool PreyMotor::send_velocity_command(float target_turns_s) {
+	const auto now = std::chrono::steady_clock::now();
+	// torque_ff comes from the literal target, not the kick-adjusted value —
+	// see apply_kick()'s comment on why differentiating across the kick's
+	// own jump would inject a spurious braking torque.
+	const float torque_ff = compute_torque_ff_nm(target_turns_s, now);
+	const float effective_turns_s = apply_kick(target_turns_s, now);
+	return can_.set_input_velocity(effective_turns_s, torque_ff);
 }
 
 void PreyMotor::refresh_status() const {
@@ -104,7 +194,7 @@ void PreyMotor::apply(const MotorCommand& cmd) {
 		const float turns_s = chain_mps_to_turns_s(cmd.velocity_mps);
 		// No refresh_status here — MotionPlanner runs ~50 Hz and must keep
 		// Set_Input_Vel flowing faster than the ODrive watchdog.
-		if (!can_.set_input_velocity(turns_s, 0.0f)) {
+		if (!send_velocity_command(turns_s)) {
 			log_error("motor", "Set_Input_Vel failed ("
 				+ std::to_string(turns_s) + " turns/s)");
 		}
@@ -116,6 +206,13 @@ void PreyMotor::stop() {
 		return;
 	}
 	can_.set_input_velocity(0.0f, 0.0f);
+	// Why: next command starts a fresh feed-forward window — a dt-based accel
+	// estimate spanning this stop would be fictitious. Same for kick state —
+	// the motor is at rest now, so the next low-speed command is a genuine
+	// breakaway again.
+	have_last_cmd_ = false;
+	kicking_ = false;
+	pursuing_turns_s_ = 0.0f;
 	refresh_status();
 }
 
@@ -125,6 +222,9 @@ void PreyMotor::estop() {
 	}
 	can_.send_estop();
 	can_.set_input_velocity(0.0f, 0.0f);
+	have_last_cmd_ = false;
+	kicking_ = false;
+	pursuing_turns_s_ = 0.0f;
 	refresh_status();
 }
 
@@ -201,7 +301,7 @@ bool PreyMotor::set_velocity_turns_s(float turns_s) {
 		return false;
 	}
 	// Skip refresh on the command path so spin loops can feed the watchdog.
-	return can_.set_input_velocity(turns_s, 0.0f);
+	return send_velocity_command(turns_s);
 }
 
 bool PreyMotor::command_turns_s(float turns_s) {
@@ -253,4 +353,11 @@ bool PreyMotor::try_get_active_errors(uint32_t& active_errors, uint32_t& disarm_
 		return false;
 	}
 	return can_.get_active_errors(active_errors, disarm_reason, timeout_ms);
+}
+
+bool PreyMotor::set_vel_gains(float vel_gain, float vel_integrator_gain) {
+	if (!status_.connected) {
+		return false;
+	}
+	return can_.set_vel_gains(vel_gain, vel_integrator_gain);
 }

@@ -268,6 +268,7 @@ distance stop. Constants live in `include/motor/lab_motion_limits.h`.
 | Limit | Value | Notes |
 |-------|-------|-------|
 | Min viable command | ~1.5 turns/s (~1.0 m/s chain) | Below this, closed-loop often shows ~0 motion |
+| Breakaway kick | targets &lt;3 turns/s from rest get a flat 5 turns/s kick until measured velocity reaches 80% of target (2 s safety fallback), then fall back | `PreyMotor` — see `kKick*` in `lab_motion_limits.h`; not a MotionPlanner setting |
 | Spool-up | ~1.2 s | Time to approach a step velocity command |
 | Shortest reliable burst | **~80 mm** | Isolated move, either direction (~±5%) |
 | Comfortable / chase jab | **≥100–120 mm** | Tighter % error |
@@ -280,6 +281,13 @@ Sweep after hardware changes:
 ./bin/test_odrive_move --config config/arena_experiment.json \
   --distance-mm 100 --duration-ms 2000 --accel-mps2 50 --via-planner
 ./bin/test_hunt_sim --config config/arena_experiment.json --duration-s 120 --max-accel 50
+```
+
+Calibrate chain inertia/friction (feeds `PreyMotor`'s `torque_ff`; chain must
+be a closed loop — see [tests/README.md](tests/README.md#test_motor_inertia_calibration--chain-motor-inertiafriction-calibration)):
+
+```bash
+./bin/test_motor_inertia_calibration --config config/arena_experiment.json --write-config
 ```
 
 ### Arena config (`config/arena_experiment.json`)

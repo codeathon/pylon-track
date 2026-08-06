@@ -14,6 +14,7 @@ All outputs go to `tests/output/<suite>/<timestamp>_<label>/` (gitignored).
 | `test_param_sweep` | Parameter sweeps + resolution / binning / compound camera presets |
 | `test_latency` | Two-object tracking benchmark: speeds, centroids, distance, latency |
 | `test_mount_height` | Per-height resolution check: annotated stills + the latency benchmark |
+| `test_motor_inertia_calibration` | Motor-only (no camera): calibrates chain inertia/friction from a step-response sweep |
 
 ---
 
@@ -457,6 +458,231 @@ Mind that raising the camera trades resolution for coverage:
 | 2.0 m | 1.73 | 24×24 mm object |
 
 ---
+
+## `test_motor_inertia_calibration` — chain motor inertia/friction calibration
+
+Motor-only (no camera, Pylon, or LabJack needed) — same linkage as
+`test_distance_moving`/`test_hunt_sim`. Requires the ODrive CAN chain motor
+connected and `can0` up. **The chain must be a closed loop (no physical
+end)** — this test spins continuously for several minutes and does not track
+position, unlike `test_odrive_move`/`test_hunt_sim` which bound every move by
+distance.
+
+### What it does
+
+Commands a sweep of step velocity changes and times how long the motor takes
+to reach each one, then fits a physical model relating motor torque to
+acceleration, speed, and static friction. The result is `chain_inertia_kg_m2`,
+`chain_viscous_friction_nm_s_per_rad`, and `chain_static_friction_nm` — three
+numbers that let `PreyMotor` push a feed-forward torque (`Set_Input_Vel`'s
+`torque_ff`, previously always 0) alongside every velocity command, so the
+ODrive's own current-limited PI loop has less error to close and spins up
+faster. Feed-forward is a no-op ( `torque_ff = 0`) until these values are
+non-zero in `config/arena_experiment.json`'s `motor` section — running this
+test does not change motor behavior unless you save its output there
+(`--write-config`) or paste it in by hand.
+
+### How it works — kick smoke test, then two trials, then two regressions
+
+0. **Kick smoke test (before Trial A):** `PreyMotor` commands a flat, fixed
+   `--kick-speed` (default 5.0 turns/s) when starting a low-speed move from
+   rest (a breakaway kick — see `kKick*` in
+   `include/motor/lab_motion_limits.h`), swapping to the literal target once
+   measured velocity reaches `--kick-cutoff-frac` (default 80%) of it — both
+   trials below command through that same path. Before Trial A runs, this
+   test tries one breakaway from a stop to `--rps-min` (the hardest target in
+   the sweep) and reports whether it actually settled, so a kick that doesn't
+   work on this hardware is caught in seconds instead of after minutes of
+   sweeping. `--no-kick-smoke-test` skips this.
+   - Optionally, `--schedule-gains` sends `Set_Vel_Gains` before each step:
+     `vel_gain` fixed at `--vel-gain`, `vel_integrator_gain` linearly
+     interpolated between `--vel-integrator-min` (at `--rps-min`) and
+     `--vel-integrator-max` (at `--rps-max`) based on the upcoming step's
+     target *speed*, not step count — a "down to 0" step gets the low-speed
+     gain regardless of how far into the sweep it is. Steps starting from
+     rest additionally get `--vel-integrator-from-rest-boost` (default 1.3x)
+     applied on top, since breaking static friction needs more integral
+     authority than continuing an already-moving trajectory. Useful if a
+     single fixed gain can't cover the full `--rps-min`–`--rps-max` range
+     without either undershooting at low speed or oscillating at high speed.
+     Off by default; see the flags table below. This is a calibration-only tool
+     (switches happen between steps, not guaranteed at full mechanical rest
+     during Trial A's cumulative ramp) — not a pattern to reuse for live
+     production control.
+1. **Trial A (cumulative ramp):** starting from a stop, step to `--rps-min`
+   (default 1.0 turns/s), time how long it takes to settle, hold there for
+   `--hold-s` (default 2s), then step to the *next* target from wherever the
+   motor already is (e.g. 1.0 → 1.2 → 1.4 → ...), repeating up to `--rps-max`
+   (default 6.0) in `--rps-step` increments (default 0.2). Then decelerate
+   from the top target back to 0 (also timed) and dwell `--hold-s` at 0.
+2. **Trial B (reset every step):** for every target in the same list, spin up
+   from a full stop (timed), hold, spin back down to 0 (timed), hold, then
+   move to the next target — always starting from 0. This isolates each
+   step's response instead of chaining them, and (unlike Trial A) times a
+   deceleration for every single step, not just once at the end.
+3. Both trials command the target continuously (feeding the ODrive watchdog)
+   and sample velocity + motor current (`Get_Iq`) at `--sample-hz` (default
+   100 Hz) throughout — during the ramp *and* the post-settle dwell — logging
+   every sample, not just per-step timestamps.
+4. **Timing cross-check regression:** `settle_time_s ≈ a + b·|Δturns/s|`, a
+   simple least-squares fit across every step from both trials. Printed for
+   sanity-checking the dynamic fit below, not used for the saved calibration.
+5. **Dynamic regression (the actual calibration):** every consecutive sample
+   pair within a step gives one data point — measured torque
+   (`Iq_measured × --torque-constant`) against the discrete angular
+   acceleration and velocity between those two samples. Least squares across
+   every such point from both trials (not just step endpoints) fits
+   `torque = J·α + B·ω + τ_c·sign(ω)` for inertia `J`, viscous friction `B`,
+   and static/Coulomb friction `τ_c`. Reports R² alongside the fit.
+
+"Reached" a target means velocity stayed within a band continuously for
+`--settle-hold-s` (default 0.2 s) — a single in-band sample doesn't count, to
+reject overshoot bouncing through the band. The band is `--settle-tol-pct`
+(default 2.5%) of the target speed, floored at 0.05 turns/s — never tighter
+than that floor (so low-speed steps aren't held to a stricter band than
+before), only loosening once 2.5% of the target exceeds it (above ~2 rps at
+the default). The floor also covers the descent-to-0 step after every ramp,
+where a pure percentage would be an unsatisfiable 0-width band.
+
+### If a step won't settle at a specific speed
+
+A single target failing to settle **does not** abort the whole sweep — it's
+logged, recorded in `steps.csv` with `ok=0`, and the sweep moves on to the
+next target. Only Ctrl-C, or `test_motor_inertia_calibration` failing to
+settle on 5 targets *in a row* (which looks systemic — e.g. a dropped CAN
+connection — rather than one bad speed), stops the run early.
+
+Before giving up, if the step is still unsettled right at `--max-step-wait-s`
+but the last measured velocity is already within `--near-tol` (default 0.1)
+of target, it gets **one** `--grace-s` (default 1 s) extension instead of an
+immediate failure — a slow final approach into tolerance is still real
+dynamics worth letting finish, not a sign of something wrong, and either way
+`settle_time_s` in `steps.csv` reflects the true total time it took (and
+`used_grace` flags that it needed the extra second). Only steps that are
+*still* not near target when the grace check happens skip straight to
+failing; only one extension is granted per step, so a step that's still
+oscillating or genuinely stuck can't stall the sweep indefinitely.
+
+The timeout log line includes the ODrive's `active_errors`/`disarm_reason`
+and `axis_state` at that moment, the measured velocity **range** and last
+value seen during the attempt, the peak `|Iq|`, and whether the grace
+extension was already used and still didn't help — plus a classification:
+
+- **"steady above/below target by X turns/s"** — velocity wasn't bouncing
+  (swing ≤ 2× the settle band), it's parked a fixed amount off — including
+  overshot-and-stuck-high, not just undershoot.
+- **"oscillating through the target (hunting)"** — velocity swung above and
+  below the target repeatedly without holding inside the settle band. This is
+  a velocity-loop stability symptom, not a "couldn't get there" symptom.
+- **"swinging without settling"** — moved a lot but stayed on one side of
+  the target (didn't cross it) — e.g. still mid-ramp or overshot once and
+  hasn't come back down yet.
+
+If speeds above some threshold consistently show **"oscillating through the
+target"** with a swing on the order of ±0.1 turns/s or more (not just a
+narrow resonance pocket — the same pattern at every speed above the
+threshold), that's a velocity-loop tuning symptom, and it may be related to
+`kDefaultCurrentLimitA` in `src/motor/odrive_can.cpp` (currently 60 A): a
+lower current limit can *mask* an underdamped velocity loop by saturating
+current before it can overshoot, so raising the limit can turn a slow-but-
+smooth response into a faster-but-oscillating one. To tell them apart:
+
+1. Check `max |Iq|` in the timeout log / `iq_measured_a` in `samples.csv` for
+   the failing speeds. Pinned near the current limit the whole time → torque/
+   back-EMF saturation (a real ceiling for this speed, not a tuning issue).
+   Swinging up and down with velocity rather than pinned → the loop actively
+   fighting an oscillation (a tuning issue).
+2. As a diagnostic (not a permanent fix), try temporarily lowering
+   `kDefaultCurrentLimitA` back toward 40 in `src/motor/odrive_can.cpp` and
+   rebuilding. If the oscillation above the threshold goes away, the real fix
+   is retuning the ODrive's velocity-loop gains for the higher current
+   ceiling (`odrivetool`: `axis0.controller.config.vel_gain` /
+   `vel_integrator_gain`), not this test's code.
+3. If you just need usable calibration data now while investigating further,
+   run with `--rps-max` set just below wherever it starts failing (e.g.
+   `--rps-max 4.4`) — the regression is valid over whatever range you
+   actually swept, it doesn't need to cover 1.0–6.0.
+
+Loosening `--settle-tol-pct` or `--settle-hold-s` will make either symptom
+disappear from the log without fixing the underlying limit — treat that as
+confirmation of a real issue, not a fix for one.
+
+### Steps to run it
+
+```bash
+cd build
+./bin/test_motor_inertia_calibration --config ../config/arena_experiment.json
+```
+
+Add `--write-config` to save the fitted values directly into the config's
+`motor` section (merge-write — other sections are untouched) instead of
+copy-pasting the printed block yourself:
+
+```bash
+./bin/test_motor_inertia_calibration --config ../config/arena_experiment.json --write-config
+```
+
+Ctrl-C aborts and stops the motor at any point; partial samples/steps are
+still written to CSV but no regression is run on an aborted sweep.
+
+### Variables (CLI flags)
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--config <path>` | resolved beside binary / `config/` | `arena_experiment.json` (needs `motor.chain_mm_per_motor_turn` or `pulley_radius_m`, and `motor.can_interface`) |
+| `--rps-min <turns/s>` | `1.0` | First (lowest) sweep target |
+| `--rps-max <turns/s>` | `6.0` | Last (highest) sweep target |
+| `--rps-step <turns/s>` | `0.2` | Increment between targets |
+| `--hold-s <s>` | `2.0` | Dwell time after settling at each target (and at 0) |
+| `--settle-tol-pct <%>` | `2.5` | ± band around the target that counts as "reached", as a percent of the target speed, floored at 0.05 turns/s |
+| `--settle-hold-s <s>` | `0.2` | Time the velocity must stay inside the band before it's called settled |
+| `--sample-hz <Hz>` | `100` | Velocity/Iq sampling (and command re-send) rate during ramps and dwells |
+| `--torque-constant <N·m/A>` | `0.0827` | ODrive motor torque constant (`odrivetool`: `axis0.motor.config.torque_constant`) used to convert `Iq_measured` into torque |
+| `--max-step-wait-s <s>` | `10` | Give up on a single step after this long — unless the grace extension below applies (stall/fault guard) |
+| `--near-tol <turns/s>` | `0.1` | If still unsettled right at `--max-step-wait-s` but within this of target, grant one `--grace-s` extension instead of giving up |
+| `--grace-s <s>` | `1.0` | Length of that one-time extension. `steps.csv`'s `used_grace` column and `settle_time_s` reflect whichever attempt it took |
+| `--iq-sign <1 or -1>` | `-1` | Multiplies `Iq_Measured` before the dynamic fit. Defaults to `-1` because this rig's `Iq_Measured` sign convention disagrees with the encoder's positive-velocity direction (confirmed on hardware). Pass `1` only if that's ever fixed/rewired — if `chain_inertia_kg_m2`, `chain_viscous_friction_nm_s_per_rad`, and `chain_static_friction_nm` all come out negative together, that's this sign issue again, not noise |
+| `--kick-speed <turns/s>` | `LabMotionLimits::kKickFixedTurnsS` (5.0) | Flat breakaway-kick speed, regardless of target |
+| `--kick-cutoff-frac <0-1>` | `LabMotionLimits::kKickCutoffFraction` (0.8) | Swap from the kick to the literal target once \|measured\| reaches this fraction of \|target\| |
+| `--no-kick-smoke-test` | off | Skip the pre-Trial-A kick smoke test |
+| `--schedule-gains` | off | Before each step, sends `Set_Vel_Gains` over CAN (runtime-only — doesn't touch `odrivetool`'s saved config): `vel_gain` fixed at `--vel-gain`, `vel_integrator_gain` linearly interpolated between `--vel-integrator-min`/`--vel-integrator-max` by the upcoming target's speed |
+| `--vel-gain <val>` | none | Fixed proportional gain used whenever `--schedule-gains` is on (no default — a wrong guess drives the motor) |
+| `--vel-integrator-min <val>` | `0.04` | `vel_integrator_gain` at `--rps-min` (and below, e.g. descent-to-0 steps) |
+| `--vel-integrator-max <val>` | `0.15` | `vel_integrator_gain` at `--rps-max` |
+| `--vel-integrator-from-rest-boost <val>` | `1.3` | Multiplies the interpolated `vel_integrator_gain` for steps starting from rest (breakaway) — overcoming static friction needs more integral authority than continuing an already-moving trajectory. Not clamped to `--vel-integrator-max`, so near `--rps-max` this can push above it |
+| `--output <dir>` | `tests/output` | Root for `motor_inertia_calibration/<timestamp>/{samples,steps}.csv` |
+| `--write-config` | off | Merge-write the fitted values into `--config`'s `motor` section |
+| `--verbose` | off | Debug logging |
+
+### Output
+
+- `samples.csv` — every logged sample: `t_s, trial, step_index, direction,
+  target_turns_s, measured_turns_s, iq_measured_a, iq_valid`.
+- `steps.csv` — one row per up/down transition: `trial, step_index,
+  direction, from_turns_s, to_turns_s, delta_turns_s, settle_time_s,
+  end_measured_turns_s, max_vel_turns_s, used_grace, ok`. The kick smoke test
+  (trial `0`) isn't included — it's a separate pre-sweep pass, not part of
+  the calibration.
+- Printed summary: the timing cross-check fit, then the dynamic fit's R² and
+  the three calibrated values, formatted ready to paste into
+  `config/arena_experiment.json`'s `motor` section.
+
+`Get_Iq`/`Get_Error` are requested on demand over CAN (an RTR frame) rather
+than relying on the ODrive's cyclic-broadcast config for those two messages
+— unlike `Get_Encoder_Estimates`/`Heartbeat`, they aren't cyclic by default,
+and this driver previously had no way to ask for them, so `max |Iq|` in the
+timeout log and `iq_measured_a` in `samples.csv` always read `0`/invalid no
+matter how long it waited. If you're on an older build without this fix and
+still see `max |Iq| = 0.000000 A` on every single step (not just the failing
+ones), that's the symptom — check `axis_error`/`axis_state` instead in the
+meantime, since those come from Heartbeat and are unaffected.
+
+If fewer than half the `Get_Iq` reads still succeed after this fix, the tool
+warns that something is still off (e.g. the ODrive genuinely isn't answering
+RTR requests on this firmware version) and the dynamic fit (not the timing
+cross-check) should be treated as unreliable. A fitted `chain_inertia_kg_m2
+<= 0` is flagged the same way — physically impossible, so the run's numbers
+shouldn't be trusted as-is.
 
 ## Basler calibration notes
 
