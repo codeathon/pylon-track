@@ -1,5 +1,7 @@
 # pylon-track
 
+The [cad](https://cad.onshape.com/documents/008bc3472a6036ca6588dd09/w/431fb3658c4dc610800607d2/e/a7888bf400a73fb10003823a?renderMode=0&uiState=6a763630d8d8dbf0beddde50) for the project is open source on onshape. 
+
 Real-time dual-animal tracking from a Basler USB3 camera using the [Basler pylon SDK](https://www.baslerweb.com/en/software/pylon/) and OpenCV. Designed for overhead arena imaging: track a **ferret** and **prey** (mouse) at ~200 fps, output position, speed, heading, and inter-animal distance in millimeters.
 
 The **arena experiment platform** adds closed-loop prey chase via an ODrive S1 chain motor, an optional LabJack shuttle motor (idle wobble + hallway-end pulses — see [What the shuttle motor actually does](#what-the-shuttle-motor-actually-does)), session CSV recording, and a state-managed workflow in `arena_experiment`.
